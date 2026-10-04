@@ -32,17 +32,6 @@ cargo run
 | F | Toggle flashlight |
 | Esc / Left click | Release / capture cursor |
 
-## Project layout
-
-```
-src/
-  main.rs    app setup, chunk streaming, LOD, player
-  houses.rs  procedural house meshes
-  props.rs   yard and street props
-  mesh.rs    mesh builder
-  util.rs    RNG and color helpers
-```
-
 ## Configuration
 
 Tunable constants live at the top of `src/main.rs`: fog distance, chunk size, load and unload distances, LOD thresholds, player speed.

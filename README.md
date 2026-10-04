@@ -18,9 +18,15 @@ Built with Rust, [Bevy](https://bevy.org) 0.16 and [Avian](https://github.com/Jo
 
 Requires Rust 1.85 or newer.
 
-```
-cargo run
-```
+1. **Clone the repository**
+   ```bash
+   git clone https://github.com/yatsenk/restless-night.git
+   cd restless-night
+   
+2. **Build and Run**
+   ```bash
+   cargo run
+
 
 ## Controls
 

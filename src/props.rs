@@ -5,133 +5,12 @@ use bevy::prelude::*;
 use crate::mesh::MeshBuilder;
 use crate::util::{GameRng, Rgba, lerp_col, lin, scale_col};
 
-fn fence_run(b: &mut MeshBuilder, p0: Vec2, p1: Vec2, detail: bool, col: Rgba, jr: &mut GameRng) {
-    let delta = p1 - p0;
-    let len = delta.length();
-    if len < 0.01 {
-        return;
-    }
-    let dir2 = delta / len;
-    let t = Vec3::new(dir2.x, 0.0, dir2.y);
-    let n = Vec3::new(-dir2.y, 0.0, dir2.x);
-    let mid = (p0 + p1) * 0.5;
-    let mid3 = Vec3::new(mid.x, 0.0, mid.y);
-
-    for y in [0.4_f32, 1.0] {
-        b.obox(
-            mid3 + Vec3::Y * y,
-            t,
-            n,
-            Vec3::new(len * 0.5, 0.055, 0.04),
-            scale_col(col, 0.85),
-        );
-    }
-
-    let posts = (len / 3.0).ceil().max(1.0) as u32;
-    for i in 0..=posts {
-        let q = p0.lerp(p1, i as f32 / posts as f32);
-        let c = Vec3::new(q.x, 0.8, q.y);
-        b.obox(c, t, n, Vec3::new(0.1, 0.8, 0.1), scale_col(col, 0.8));
-        if detail {
-            b.pyramid(
-                Vec3::new(q.x, 1.6, q.y),
-                0.13,
-                0.13,
-                0.16,
-                scale_col(col, 0.75),
-            );
-        }
-    }
-
-    if detail {
-        let count = (len / 0.42).floor() as u32;
-        for i in 0..count {
-            let q = p0 + dir2 * ((i as f32 + 0.5) * len / count as f32);
-            let h = 1.25 + jr.range(-0.06, 0.06);
-            let k = 0.85 + 0.25 * jr.f32();
-            let base = Vec3::new(q.x, 0.0, q.y) + n * 0.06;
-            b.obox(
-                base + Vec3::Y * (h * 0.5 + 0.05),
-                t,
-                n,
-                Vec3::new(0.065, h * 0.5, 0.015),
-                scale_col(col, k),
-            );
-            b.pyramid(
-                base + Vec3::Y * (h + 0.05),
-                0.065,
-                0.015,
-                0.13,
-                scale_col(col, k),
-            );
-        }
-    }
-}
-
-pub fn build_fence(half: f32, gap: f32, detail: bool) -> Mesh {
-    let mut b = MeshBuilder::default();
-    let mut jr = GameRng::seeded(0xFE17CE);
-    let col = lin(0.30, 0.24, 0.18);
-    let h = half;
-    let g = gap;
-    fence_run(
-        &mut b,
-        Vec2::new(h, -h),
-        Vec2::new(h, h),
-        detail,
-        col,
-        &mut jr,
-    );
-    fence_run(
-        &mut b,
-        Vec2::new(-h, -h),
-        Vec2::new(h, -h),
-        detail,
-        col,
-        &mut jr,
-    );
-    fence_run(
-        &mut b,
-        Vec2::new(-h, h),
-        Vec2::new(h, h),
-        detail,
-        col,
-        &mut jr,
-    );
-    fence_run(
-        &mut b,
-        Vec2::new(-h, -h),
-        Vec2::new(-h, -g),
-        detail,
-        col,
-        &mut jr,
-    );
-    fence_run(
-        &mut b,
-        Vec2::new(-h, g),
-        Vec2::new(-h, h),
-        detail,
-        col,
-        &mut jr,
-    );
-    for sg in [-1.0_f32, 1.0] {
-        b.cuboid(
-            Vec3::new(-h - 0.14, 0.0, sg * g - 0.14),
-            Vec3::new(-h + 0.14, 1.9, sg * g + 0.14),
-            scale_col(col, 0.7),
-        );
-        if detail {
-            b.pyramid(
-                Vec3::new(-h, 1.9, sg * g),
-                0.2,
-                0.2,
-                0.25,
-                scale_col(col, 0.6),
-            );
-        }
-    }
-    b.build()
-}
+const LEAF_TONES: [([f32; 3], [f32; 3]); 4] = [
+    ([0.40, 0.12, 0.02], [0.80, 0.38, 0.05]),
+    ([0.32, 0.04, 0.03], [0.65, 0.16, 0.05]),
+    ([0.42, 0.28, 0.04], [0.80, 0.60, 0.12]),
+    ([0.25, 0.10, 0.04], [0.55, 0.27, 0.07]),
+];
 
 pub fn build_gravestone(kind: u32, detail: bool) -> Mesh {
     let mut b = MeshBuilder::default();
@@ -523,11 +402,13 @@ fn grow_branch(
     depth: u32,
     sides: u32,
     bark: (Rgba, Rgba),
+    tips: &mut Vec<Vec3>,
 ) {
     let end = start + dir * len;
     let r_end = r * 0.62;
     b.tube(start, end, r, r_end, sides, bark.0, bark.1);
     if depth == 0 {
+        tips.push(end);
         return;
     }
     let forks = if depth > 1 { 3 } else { 2 };
@@ -539,13 +420,25 @@ fn grow_branch(
         );
         let new_dir = (dir + jitter * 0.9).normalize();
         let new_len = len * rng.range(0.62, 0.8);
-        grow_branch(b, rng, end, new_dir, new_len, r_end, depth - 1, sides, bark);
+        grow_branch(
+            b,
+            rng,
+            end,
+            new_dir,
+            new_len,
+            r_end,
+            depth - 1,
+            sides,
+            bark,
+            tips,
+        );
     }
 }
 
-pub fn build_tree(seed: u64, detail: bool) -> (Mesh, f32, f32) {
+pub fn build_tree(seed: u64, detail: bool, leafy: bool) -> (Mesh, f32, f32) {
     let mut rng = GameRng::seeded(seed);
     let mut b = MeshBuilder::default();
+    let mut tips: Vec<Vec3> = Vec::new();
     let bark_dark = lin(0.07, 0.055, 0.045);
     let bark_light = lin(0.17, 0.14, 0.11);
     let sides = if detail { 8 } else { 5 };
@@ -595,6 +488,7 @@ pub fn build_tree(seed: u64, detail: bool) -> (Mesh, f32, f32) {
             depth,
             sides.min(6),
             (bark_light, bark_dark),
+            &mut tips,
         );
     }
     grow_branch(
@@ -607,7 +501,39 @@ pub fn build_tree(seed: u64, detail: bool) -> (Mesh, f32, f32) {
         depth,
         sides.min(6),
         (bark_light, bark_dark),
+        &mut tips,
     );
+    if leafy {
+        let (d, l) = LEAF_TONES[(seed % LEAF_TONES.len() as u64) as usize];
+        let dark = lin(d[0], d[1], d[2]);
+        let light = lin(l[0], l[1], l[2]);
+        let (rings, segs) = if detail { (8, 13) } else { (4, 7) };
+        let max_tips = if detail { 14 } else { 6 };
+        let step = (tips.len() / max_tips).max(1);
+        for (i, tip) in tips.iter().enumerate().step_by(step) {
+            let radius = rng.range(1.2, 1.8);
+            b.blob(
+                *tip + Vec3::Y * radius * 0.3,
+                radius,
+                0.75,
+                dark,
+                light,
+                rings,
+                segs,
+                i as f32 * 1.7 + (seed % 97) as f32,
+            );
+        }
+        b.blob(
+            top + Vec3::Y * 1.0,
+            rng.range(1.6, 2.1),
+            0.8,
+            dark,
+            light,
+            rings,
+            segs,
+            (seed % 53) as f32,
+        );
+    }
     (b.build(), r0, 4.5)
 }
 

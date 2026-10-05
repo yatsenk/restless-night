@@ -41,6 +41,8 @@ pub struct Dims {
     pub h: f32,
     pub rh: f32,
     pub bay_z: Option<f32>,
+    pub wall: Rgba,
+    pub roof: Rgba,
 }
 
 pub struct HouseMesh {
@@ -58,6 +60,7 @@ struct Style {
     shutter: Option<Rgba>,
     bay: Option<f32>,
     chimney: bool,
+    boxes: bool,
     stone: Rgba,
     brick: Rgba,
     wood: Rgba,
@@ -85,6 +88,7 @@ fn style_from(seed: u64) -> Style {
         None
     };
     let chimney = rng.chance(0.8);
+    let boxes = rng.chance(0.45);
     Style {
         floors,
         dims: Dims {
@@ -93,6 +97,8 @@ fn style_from(seed: u64) -> Style {
             h: floors as f32 * FLOOR_H,
             rh,
             bay_z: bay.map(|side| w * 0.5 * 0.6 * side),
+            wall: lin(wc[0], wc[1], wc[2]),
+            roof: lin(rc[0], rc[1], rc[2]),
         },
         wall: lin(wc[0], wc[1], wc[2]),
         roof: lin(rc[0], rc[1], rc[2]),
@@ -101,6 +107,7 @@ fn style_from(seed: u64) -> Style {
         shutter,
         bay,
         chimney,
+        boxes,
         stone: lin(0.24, 0.23, 0.22),
         brick: lin(0.38, 0.15, 0.11),
         wood: lin(0.18, 0.11, 0.06),
@@ -119,6 +126,7 @@ fn window(
     detail: bool,
     trim: Rgba,
     shutter: Option<Rgba>,
+    boxed: bool,
 ) {
     let white = lin(1.0, 1.0, 1.0);
     if !detail {
@@ -171,13 +179,39 @@ fn window(
         );
     }
     b.obox(c + n * 0.05, t, n, Vec3::new(0.03, hh, 0.045), trim);
+    for k in [-1.0_f32, 1.0] {
+        b.obox(
+            c + Vec3::Y * (wh * 0.167 * k) + n * 0.05,
+            t,
+            n,
+            Vec3::new(hw, 0.025, 0.045),
+            trim,
+        );
+    }
     b.obox(
-        c + Vec3::Y * (wh * 0.12) + n * 0.05,
+        c - Vec3::Y * (hh - 0.04) + n * 0.04,
         t,
         n,
-        Vec3::new(hw, 0.03, 0.045),
-        trim,
+        Vec3::new(hw, 0.04, 0.055),
+        scale_col(trim, 0.8),
     );
+    if boxed {
+        let wood = lin(0.20, 0.12, 0.07);
+        let bc = c - Vec3::Y * (hh + 0.3) + n * 0.22;
+        b.obox(bc, t, n, Vec3::new(hw + 0.1, 0.13, 0.15), wood);
+        let dry = lin(0.38, 0.26, 0.09);
+        for i in 0..7 {
+            let u = -hw + 0.15 + i as f32 * (2.0 * hw - 0.3) / 6.0;
+            let hgt = 0.25 + 0.12 * ((i * 5 % 4) as f32);
+            b.obox(
+                bc + t * u + Vec3::Y * (0.13 + hgt * 0.5) + n * ((i % 3) as f32 * 0.03 - 0.03),
+                t,
+                n,
+                Vec3::new(0.02, hgt * 0.5, 0.02),
+                dry,
+            );
+        }
+    }
     if let Some(sc) = shutter {
         let sw = ww * 0.28;
         for s in [-1.0_f32, 1.0] {
@@ -418,8 +452,8 @@ pub fn build_house(seed: u64, detail: bool) -> (HouseMesh, Dims) {
         );
     }
 
-    let wy = |f: u32| BASE_H + 1.4 + f as f32 * FLOOR_H;
-    let (ww, wh) = (1.3, 1.5);
+    let wy = |f: u32| BASE_H + 1.45 + f as f32 * FLOOR_H;
+    let (ww, wh) = (1.5, 1.6);
 
     if detail {
         let strip = scale_col(s.wall, 0.8);
@@ -510,11 +544,7 @@ pub fn build_house(seed: u64, detail: bool) -> (HouseMesh, Dims) {
     }
 
     for f in 0..s.floors {
-        let mut front = vec![-hz * 0.6, hz * 0.6];
-        if f > 0 {
-            front.push(0.0);
-        }
-        for z in front {
+        for z in [-hz * 0.6, hz * 0.6] {
             if f == 0 {
                 if let Some(side) = s.bay {
                     if z * side > 0.0 {
@@ -533,9 +563,10 @@ pub fn build_house(seed: u64, detail: bool) -> (HouseMesh, Dims) {
                 detail,
                 s.trim,
                 s.shutter,
+                s.boxes,
             );
         }
-        for z in [-hz * 0.55, 0.0, hz * 0.55] {
+        for z in [-hz * 0.5, hz * 0.5] {
             window(
                 &mut b,
                 &mut g,
@@ -547,32 +578,22 @@ pub fn build_house(seed: u64, detail: bool) -> (HouseMesh, Dims) {
                 detail,
                 s.trim,
                 s.shutter,
+                false,
             );
         }
-        for xx in [-hx * 0.45, hx * 0.45] {
+        for sg in [-1.0_f32, 1.0] {
             window(
                 &mut b,
                 &mut g,
-                Vec3::new(xx, wy(f), hz),
-                Vec3::Z,
+                Vec3::new(0.0, wy(f), sg * hz),
+                Vec3::new(0.0, 0.0, sg),
                 Vec3::X,
                 ww,
                 wh,
                 detail,
                 s.trim,
                 s.shutter,
-            );
-            window(
-                &mut b,
-                &mut g,
-                Vec3::new(xx, wy(f), -hz),
-                -Vec3::Z,
-                Vec3::X,
-                ww,
-                wh,
-                detail,
-                s.trim,
-                s.shutter,
+                false,
             );
         }
     }
@@ -589,6 +610,7 @@ pub fn build_house(seed: u64, detail: bool) -> (HouseMesh, Dims) {
             detail,
             s.trim,
             None,
+            false,
         );
     }
 
@@ -622,6 +644,7 @@ pub fn build_house(seed: u64, detail: bool) -> (HouseMesh, Dims) {
             detail,
             s.trim,
             None,
+            false,
         );
         for sg in [-1.0_f32, 1.0] {
             window(
@@ -635,6 +658,7 @@ pub fn build_house(seed: u64, detail: bool) -> (HouseMesh, Dims) {
                 detail,
                 s.trim,
                 None,
+                false,
             );
         }
     }

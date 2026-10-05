@@ -66,3 +66,46 @@ pub fn chunk_seed(c: IVec2) -> u64 {
     h ^= h >> 32;
     h | 1
 }
+
+pub fn hash2(x: i32, z: i32, s: u32) -> f32 {
+    let mut h = (x as u32).wrapping_mul(0x27d4_eb2d)
+        ^ (z as u32).wrapping_mul(0x1656_67b1)
+        ^ s.wrapping_mul(0x9e37_79b1);
+    h ^= h >> 15;
+    h = h.wrapping_mul(0x85eb_ca6b);
+    h ^= h >> 13;
+    h = h.wrapping_mul(0xc2b2_ae35);
+    h ^= h >> 16;
+    (h & 0xffff) as f32 / 65535.0
+}
+
+pub fn vnoise(x: f32, z: f32, s: u32) -> f32 {
+    let xi = x.floor();
+    let zi = z.floor();
+    let fx = x - xi;
+    let fz = z - zi;
+    let sx = fx * fx * (3.0 - 2.0 * fx);
+    let sz = fz * fz * (3.0 - 2.0 * fz);
+    let (xi, zi) = (xi as i32, zi as i32);
+    let a = hash2(xi, zi, s);
+    let b = hash2(xi + 1, zi, s);
+    let c = hash2(xi, zi + 1, s);
+    let d = hash2(xi + 1, zi + 1, s);
+    let top = a + (b - a) * sx;
+    let bot = c + (d - c) * sx;
+    top + (bot - top) * sz
+}
+
+pub fn fbm(x: f32, z: f32, s: u32) -> f32 {
+    let mut sum = 0.0;
+    let mut amp = 0.5;
+    let mut f = 1.0;
+    let mut norm = 0.0;
+    for o in 0..4 {
+        sum += vnoise(x * f, z * f, s.wrapping_add(o * 101)) * amp;
+        norm += amp;
+        amp *= 0.5;
+        f *= 2.0;
+    }
+    sum / norm
+}

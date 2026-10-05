@@ -49,6 +49,21 @@ impl MeshBuilder {
         self.tri(ia, ic, id);
     }
 
+    pub fn tri3c(&mut self, a: Vec3, b: Vec3, c: Vec3, ca: Rgba, cb: Rgba, cc: Rgba) {
+        let ia = self.vert(a, ca);
+        let ib = self.vert(b, cb);
+        let ic = self.vert(c, cc);
+        self.tri(ia, ib, ic);
+    }
+
+    pub fn quad_c(&mut self, p: [Vec3; 4], c: [Rgba; 4], out: Vec3) {
+        let flip = (p[1] - p[0]).cross(p[2] - p[0]).dot(out) < 0.0;
+        let order: [usize; 4] = if flip { [0, 3, 2, 1] } else { [0, 1, 2, 3] };
+        let i: Vec<u32> = order.iter().map(|&k| self.vert(p[k], c[k])).collect();
+        self.tri(i[0], i[1], i[2]);
+        self.tri(i[0], i[2], i[3]);
+    }
+
     pub fn quad_out(&mut self, a: Vec3, b: Vec3, c: Vec3, d: Vec3, out: Vec3, col: Rgba) {
         if (b - a).cross(c - a).dot(out) < 0.0 {
             self.quad(a, d, c, b, col);

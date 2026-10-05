@@ -1,16 +1,21 @@
+mod far;
+mod ground;
 mod houses;
 mod mesh;
 mod props;
 mod util;
 
-use std::collections::{HashMap, VecDeque};
+use std::collections::{HashMap, HashSet, VecDeque};
 use std::f32::consts::{FRAC_PI_2, PI, TAU};
 
 use avian3d::prelude::*;
 use bevy::{
     core_pipeline::Skybox,
     input::mouse::AccumulatedMouseMotion,
-    pbr::{DistanceFog, FogFalloff},
+    pbr::{
+        CascadeShadowConfigBuilder, DistanceFog, FogFalloff, FogVolume, NotShadowCaster,
+        VolumetricFog, VolumetricLight,
+    },
     prelude::*,
     render::{
         render_asset::RenderAssetUsages,
@@ -22,18 +27,19 @@ use bevy::{
 };
 
 use houses::{Dims, build_house};
-use mesh::MeshBuilder;
 use props::*;
 use util::*;
 
-const FOG_RGB: [f32; 3] = [0.46, 0.48, 0.52];
-const FOG_COLOR: Color = Color::srgb(FOG_RGB[0], FOG_RGB[1], FOG_RGB[2]);
-const FOG_VISIBILITY: f32 = 15.0;
-const FAR_PLANE: f32 = 15.0;
+const HAZE_RGB: [f32; 3] = [0.034, 0.046, 0.072];
+const ZENITH_RGB: [f32; 3] = [0.006, 0.010, 0.026];
+const HAZE_COLOR: Color = Color::srgb(HAZE_RGB[0], HAZE_RGB[1], HAZE_RGB[2]);
+const HAZE_START: f32 = 120.0;
+const HAZE_END: f32 = 310.0;
+const FAR_PLANE: f32 = 340.0;
 
-fn fog_density(visibility: f32) -> f32 {
-    1.731 / visibility
-}
+const MIST_DENSITY: f32 = 0.03;
+const MIST_STEPS: u32 = 64;
+const MIST_SIZE: Vec3 = Vec3::new(110.0, 14.0, 110.0);
 
 const CHUNK: f32 = 80.0;
 const ROAD_W: f32 = 10.0;
@@ -45,14 +51,15 @@ const BLOCK_MIN: f32 = WALK_IN + WALK_W;
 const BLOCK_MAX: f32 = CHUNK - BLOCK_MIN + ROAD_W;
 const LOT: f32 = (BLOCK_MAX - BLOCK_MIN) * 0.5;
 const FRONT: f32 = 7.2;
-const FENCE_HALF: f32 = 14.0;
-const FENCE_GAP: f32 = 1.9;
 
-const LOAD_DIST: f32 = 22.0;
-const UNLOAD_DIST: f32 = 34.0;
+const LOAD_DIST: f32 = 56.0;
+const UNLOAD_DIST: f32 = 76.0;
+const FAR_LOAD_DIST: f32 = 300.0;
+const FAR_UNLOAD_DIST: f32 = 340.0;
+const FAR_BUDGET: usize = 3;
 
-const LOD_HOUSE: f32 = 16.0;
-const LOD_PROP: f32 = 8.0;
+const LOD_HOUSE: f32 = 28.0;
+const LOD_PROP: f32 = 12.0;
 const LOD_HYST: f32 = 1.5;
 
 const MOON_DIR: Vec3 = Vec3::new(-0.5, 0.38, -0.75);
@@ -60,7 +67,14 @@ const MOON_DIR: Vec3 = Vec3::new(-0.5, 0.38, -0.75);
 const MOUSE_SENS: f32 = 0.0022;
 const WALK_SPEED: f32 = 3.2;
 const RUN_SPEED: f32 = 6.0;
-const FLASHLIGHT_BASE: f32 = 350_000.0;
+const FLASHLIGHT_BASE: f32 = 450_000.0;
+const MOON_LUX: f32 = 800.0;
+const MOON_SHADOWS: bool = true;
+const MOON_RADIUS_DEG: f32 = 3.0;
+const AMBIENT_LEVEL: f32 = 45.0;
+const LAMP_LUMENS: f32 = 300_000.0;
+const LAMP_LIT_CHANCE: f32 = 0.6;
+const WINDOW_LIT_CHANCE: f32 = 0.08;
 const FLASHLIGHT_SHADOWS: bool = false;
 
 const LEAF_PALETTES: [([f32; 3], [f32; 3]); 4] = [
@@ -81,6 +95,12 @@ struct PlayerCamera;
 
 #[derive(Component)]
 struct Flashlight;
+
+#[derive(Component)]
+struct StatsText;
+
+#[derive(Component)]
+struct Mist;
 
 #[derive(Component)]
 struct Leaf {
@@ -142,9 +162,9 @@ struct CityAssets {
     pumpkin_mat: Handle<StandardMaterial>,
     face_mat: Handle<StandardMaterial>,
     lamp_glass_mat: Handle<StandardMaterial>,
+    far_glow_mat: Handle<StandardMaterial>,
     unit_cube: Handle<Mesh>,
     streets: Vec<Handle<Mesh>>,
-    fence: LodMesh,
     graves: Vec<LodMesh>,
     bushes: Vec<LodMesh>,
     hay: LodMesh,
@@ -163,162 +183,8 @@ struct CityAssets {
 struct Chunks {
     loaded: HashMap<IVec2, Vec<Entity>>,
     pending: VecDeque<(IVec2, u8)>,
-}
-
-fn hash2(x: i32, z: i32, s: u32) -> f32 {
-    let mut h = (x as u32).wrapping_mul(0x27d4_eb2d)
-        ^ (z as u32).wrapping_mul(0x1656_67b1)
-        ^ s.wrapping_mul(0x9e37_79b1);
-    h ^= h >> 15;
-    h = h.wrapping_mul(0x85eb_ca6b);
-    h ^= h >> 13;
-    (h & 0xffff) as f32 / 65535.0
-}
-
-fn flat_quad(b: &mut MeshBuilder, x0: f32, z0: f32, x1: f32, z1: f32, y: f32, col: Rgba) {
-    b.quad_out(
-        Vec3::new(x0, y, z0),
-        Vec3::new(x1, y, z0),
-        Vec3::new(x1, y, z1),
-        Vec3::new(x0, y, z1),
-        Vec3::Y,
-        col,
-    );
-}
-
-fn build_street(variant: u32) -> Mesh {
-    let mut b = MeshBuilder::default();
-    let lawn_a = lin(0.09, 0.11, 0.05);
-    let lawn_b = lin(0.20, 0.19, 0.08);
-    let dirt = lin(0.17, 0.12, 0.07);
-    let asphalt = lin(0.075, 0.075, 0.085);
-    let curb = lin(0.34, 0.33, 0.31);
-    let walk = lin(0.30, 0.29, 0.28);
-    let walk_line = lin(0.18, 0.18, 0.18);
-    let yellow = lin(0.80, 0.68, 0.20);
-    let white = lin(0.78, 0.78, 0.76);
-
-    let cell = 4.0;
-    let n = (CHUNK / cell) as i32;
-    for gx in 0..n {
-        for gz in 0..n {
-            let x0 = gx as f32 * cell;
-            let z0 = gz as f32 * cell;
-            if x0 + cell <= ROAD_W || z0 + cell <= ROAD_W {
-                continue;
-            }
-            let v = hash2(gx, gz, variant);
-            let col = if v > 0.88 {
-                dirt
-            } else {
-                lerp_col(lawn_a, lawn_b, v)
-            };
-            flat_quad(&mut b, x0, z0, x0 + cell, z0 + cell, 0.0, col);
-        }
-    }
-
-    let acell = 5.0;
-    for i in 0..(CHUNK / acell) as i32 {
-        for j in 0..2 {
-            let v = hash2(i, j, variant + 11);
-            let col = scale_col(asphalt, 0.9 + 0.2 * v);
-            let x0 = i as f32 * acell;
-            let z0 = j as f32 * acell;
-            flat_quad(&mut b, x0, z0, x0 + acell, z0 + acell, 0.03, col);
-        }
-    }
-    for i in 0..2 {
-        for j in 2..(CHUNK / acell) as i32 {
-            let v = hash2(i + 40, j, variant + 17);
-            let col = scale_col(asphalt, 0.9 + 0.2 * v);
-            let x0 = i as f32 * acell;
-            let z0 = j as f32 * acell;
-            flat_quad(&mut b, x0, z0, x0 + acell, z0 + acell, 0.03, col);
-        }
-    }
-
-    let ch = 0.15;
-    b.cuboid(
-        Vec3::new(ROAD_W, 0.0, ROAD_W),
-        Vec3::new(ROAD_W + CURB_W, ch, CHUNK),
-        curb,
-    );
-    b.cuboid(
-        Vec3::new(CHUNK - CURB_W, 0.0, ROAD_W),
-        Vec3::new(CHUNK, ch, CHUNK),
-        curb,
-    );
-    b.cuboid(
-        Vec3::new(ROAD_W + CURB_W, 0.0, ROAD_W),
-        Vec3::new(CHUNK - CURB_W, ch, ROAD_W + CURB_W),
-        curb,
-    );
-    b.cuboid(
-        Vec3::new(ROAD_W + CURB_W, 0.0, CHUNK - CURB_W),
-        Vec3::new(CHUNK - CURB_W, ch, CHUNK),
-        curb,
-    );
-
-    let wh = 0.12;
-    let far_end = BLOCK_MAX + WALK_W;
-    b.cuboid(
-        Vec3::new(WALK_IN, 0.0, WALK_IN),
-        Vec3::new(BLOCK_MIN, wh, far_end),
-        walk,
-    );
-    b.cuboid(
-        Vec3::new(BLOCK_MAX, 0.0, WALK_IN),
-        Vec3::new(far_end, wh, far_end),
-        walk,
-    );
-    b.cuboid(
-        Vec3::new(BLOCK_MIN, 0.0, WALK_IN),
-        Vec3::new(BLOCK_MAX, wh, BLOCK_MIN),
-        walk,
-    );
-    b.cuboid(
-        Vec3::new(BLOCK_MIN, 0.0, BLOCK_MAX),
-        Vec3::new(BLOCK_MAX, wh, far_end),
-        walk,
-    );
-
-    let mut t = WALK_IN + 2.0;
-    while t < far_end {
-        for (x0, x1) in [(WALK_IN, BLOCK_MIN), (BLOCK_MAX, far_end)] {
-            b.cuboid(
-                Vec3::new(x0, 0.0, t - 0.02),
-                Vec3::new(x1, wh + 0.004, t + 0.02),
-                walk_line,
-            );
-        }
-        if t > BLOCK_MIN && t < BLOCK_MAX {
-            for (z0, z1) in [(WALK_IN, BLOCK_MIN), (BLOCK_MAX, far_end)] {
-                b.cuboid(
-                    Vec3::new(t - 0.02, 0.0, z0),
-                    Vec3::new(t + 0.02, wh + 0.004, z1),
-                    walk_line,
-                );
-            }
-        }
-        t += 2.0;
-    }
-
-    for i in 0..9 {
-        let c = 0.8 + i as f32;
-        flat_quad(&mut b, c - 0.25, 10.5, c + 0.25, 12.7, 0.035, white);
-        flat_quad(&mut b, 10.5, c - 0.25, 12.7, c + 0.25, 0.035, white);
-    }
-    let mut s = 14.0;
-    while s + 3.0 <= CHUNK {
-        flat_quad(&mut b, 4.9, s, 5.1, s + 3.0, 0.036, yellow);
-        flat_quad(&mut b, s, 4.9, s + 3.0, 5.1, 0.036, yellow);
-        s += 6.0;
-    }
-    for (x, z) in [(42.0_f32, 2.6_f32), (2.6, 55.0), (66.0, 7.4)] {
-        b.disc(Vec3::new(x, 0.038, z), 0.5, 12, true, lin(0.12, 0.12, 0.13));
-        b.disc(Vec3::new(x, 0.04, z), 0.38, 12, true, lin(0.18, 0.18, 0.19));
-    }
-    b.build()
+    far: HashMap<IVec2, Vec<Entity>>,
+    far_hidden: HashSet<IVec2>,
 }
 
 fn lod_mesh(meshes: &mut Assets<Mesh>, near: Mesh, far: Mesh) -> LodMesh {
@@ -364,16 +230,16 @@ fn build_assets(meshes: &mut Assets<Mesh>, materials: &mut Assets<StandardMateri
         emissive: LinearRgba::rgb(5.0, 3.6, 1.4),
         ..default()
     });
+    let far_glow_mat = materials.add(StandardMaterial {
+        base_color: Color::srgb(1.0, 0.72, 0.30),
+        unlit: true,
+        ..default()
+    });
 
     let streets = (0..4)
-        .map(|i| meshes.add(build_street(i * 7 + 3)))
+        .map(|i| meshes.add(ground::build_street(i * 7 + 3)))
         .collect();
 
-    let fence = lod_mesh(
-        meshes,
-        build_fence(FENCE_HALF, FENCE_GAP, true),
-        build_fence(FENCE_HALF, FENCE_GAP, false),
-    );
     let graves = (0..3)
         .map(|k| {
             lod_mesh(
@@ -431,11 +297,16 @@ fn build_assets(meshes: &mut Assets<Mesh>, materials: &mut Assets<StandardMateri
         })
         .collect();
 
-    let trees = (0..4)
+    let trees = (0..7)
         .map(|i| {
-            let seed = 0xB4E3 + i as u64 * 15_485_863;
-            let (near, trunk_r, trunk_h) = build_tree(seed, true);
-            let (far, _, _) = build_tree(seed, false);
+            let leafy = i >= 4;
+            let seed = if leafy {
+                0xCAFE + (i - 4) as u64 * 104_729
+            } else {
+                0xB4E3 + i as u64 * 15_485_863
+            };
+            let (near, trunk_r, trunk_h) = build_tree(seed, true, leafy);
+            let (far, _, _) = build_tree(seed, false, leafy);
             TreeVariant {
                 mesh: lod_mesh(meshes, near, far),
                 trunk_r,
@@ -475,9 +346,9 @@ fn build_assets(meshes: &mut Assets<Mesh>, materials: &mut Assets<StandardMateri
         pumpkin_mat,
         face_mat,
         lamp_glass_mat,
+        far_glow_mat,
         unit_cube: meshes.add(Cuboid::new(1.0, 1.0, 1.0)),
         streets,
-        fence,
         graves,
         bushes,
         hay,
@@ -495,10 +366,10 @@ fn build_assets(meshes: &mut Assets<Mesh>, materials: &mut Assets<StandardMateri
 
 fn main() {
     App::new()
-        .insert_resource(ClearColor(FOG_COLOR))
+        .insert_resource(ClearColor(HAZE_COLOR))
         .insert_resource(AmbientLight {
-            color: Color::srgb(0.5, 0.55, 0.7),
-            brightness: 120.0,
+            color: Color::srgb(0.35, 0.42, 0.75),
+            brightness: AMBIENT_LEVEL,
             ..default()
         })
         .insert_resource(GameRng(0x9E37_79B9_7F4A_7C15))
@@ -525,6 +396,7 @@ fn main() {
                 cursor_control,
                 stream_chunks,
                 update_lod,
+                update_stats,
                 toggle_flashlight,
                 flashlight_flicker,
                 fog_breathing,
@@ -540,15 +412,26 @@ fn setup_world(
     mut materials: ResMut<Assets<StandardMaterial>>,
     mut rng: ResMut<GameRng>,
 ) {
-    commands.spawn((
+    let mut moon = commands.spawn((
         DirectionalLight {
-            color: Color::srgb(0.55, 0.62, 0.9),
-            illuminance: 2500.0,
-            shadows_enabled: false,
+            color: Color::srgb(0.55, 0.65, 1.0),
+            illuminance: MOON_LUX,
+            shadows_enabled: MOON_SHADOWS,
             ..default()
         },
+        CascadeShadowConfigBuilder {
+            num_cascades: 3,
+            minimum_distance: 0.1,
+            maximum_distance: 70.0,
+            first_cascade_far_bound: 8.0,
+            overlap_proportion: 0.2,
+        }
+        .build(),
         Transform::from_translation(MOON_DIR.normalize() * 50.0).looking_at(Vec3::ZERO, Vec3::Y),
     ));
+    if MOON_SHADOWS {
+        moon.insert(VolumetricLight);
+    }
 
     commands.spawn((
         RigidBody::Static,
@@ -599,6 +482,7 @@ fn dist_to_chunk(p: Vec3, c: IVec2) -> f32 {
 fn stream_chunks(
     mut commands: Commands,
     assets: Res<CityAssets>,
+    mut meshes: ResMut<Assets<Mesh>>,
     mut chunks: ResMut<Chunks>,
     player: Single<&Transform, With<Player>>,
 ) {
@@ -619,13 +503,13 @@ fn stream_chunks(
         }
     }
 
-    let far: Vec<IVec2> = chunks
+    let gone: Vec<IVec2> = chunks
         .loaded
         .keys()
         .copied()
         .filter(|c| dist_to_chunk(p, *c) > UNLOAD_DIST)
         .collect();
-    for c in far {
+    for c in gone {
         if let Some(ents) = chunks.loaded.remove(&c) {
             for e in ents {
                 commands.entity(e).despawn();
@@ -648,6 +532,83 @@ fn stream_chunks(
         };
         list.extend(ents);
         budget -= 1;
+    }
+
+    let far_reach = (FAR_LOAD_DIST / CHUNK).floor() as i32 + 1;
+    let mut far_budget = FAR_BUDGET;
+    let mut wanted: Vec<(f32, IVec2)> = Vec::new();
+    for dx in -far_reach..=far_reach {
+        for dz in -far_reach..=far_reach {
+            let c = center + IVec2::new(dx, dz);
+            let d = dist_to_chunk(p, c);
+            if d <= FAR_LOAD_DIST && !chunks.far.contains_key(&c) {
+                wanted.push((d, c));
+            }
+        }
+    }
+    wanted.sort_by(|a, b| a.0.total_cmp(&b.0));
+    for (_, c) in wanted {
+        if far_budget == 0 {
+            break;
+        }
+        far_budget -= 1;
+        let dims: Vec<Dims> = assets.houses.iter().map(|h| h.dims).collect();
+        let leafy: Vec<bool> = (0..assets.trees.len()).map(|i| i >= 4).collect();
+        let (body, glow) = far::build_far_chunk(c, &dims, &leafy);
+        let tf = Transform::from_xyz(c.x as f32 * CHUNK, 0.0, c.y as f32 * CHUNK);
+        let e1 = commands
+            .spawn((
+                Mesh3d(meshes.add(body)),
+                MeshMaterial3d(assets.vertex_mat.clone()),
+                tf,
+                NotShadowCaster,
+            ))
+            .id();
+        let e2 = commands
+            .spawn((
+                Mesh3d(meshes.add(glow)),
+                MeshMaterial3d(assets.far_glow_mat.clone()),
+                tf,
+                NotShadowCaster,
+            ))
+            .id();
+        chunks.far.insert(c, vec![e1, e2]);
+    }
+
+    let stale: Vec<IVec2> = chunks
+        .far
+        .keys()
+        .copied()
+        .filter(|c| dist_to_chunk(p, *c) > FAR_UNLOAD_DIST)
+        .collect();
+    for c in stale {
+        if let Some(ents) = chunks.far.remove(&c) {
+            for e in ents {
+                commands.entity(e).despawn();
+            }
+        }
+        chunks.far_hidden.remove(&c);
+    }
+
+    let keys: Vec<IVec2> = chunks.far.keys().copied().collect();
+    for c in keys {
+        let done = chunks.loaded.contains_key(&c) && !chunks.pending.iter().any(|(pc, _)| *pc == c);
+        let hidden = chunks.far_hidden.contains(&c);
+        if done != hidden {
+            let vis = if done {
+                Visibility::Hidden
+            } else {
+                Visibility::Inherited
+            };
+            for e in &chunks.far[&c] {
+                commands.entity(*e).insert(vis);
+            }
+            if done {
+                chunks.far_hidden.insert(c);
+            } else {
+                chunks.far_hidden.remove(&c);
+            }
+        }
     }
 }
 
@@ -771,7 +732,12 @@ fn spawn_pumpkin(
         .id()
 }
 
-fn spawn_lamp(commands: &mut Commands, a: &CityAssets, pos: Vec3) -> Entity {
+fn spawn_lamp(commands: &mut Commands, a: &CityAssets, pos: Vec3, lit: bool) -> Entity {
+    let glass_mat = if lit {
+        a.lamp_glass_mat.clone()
+    } else {
+        a.window_dark.clone()
+    };
     commands
         .spawn((
             Mesh3d(a.lamp_pole.clone()),
@@ -782,9 +748,24 @@ fn spawn_lamp(commands: &mut Commands, a: &CityAssets, pos: Vec3) -> Entity {
         .with_children(|p| {
             p.spawn((
                 Mesh3d(a.lamp_glass.clone()),
-                MeshMaterial3d(a.lamp_glass_mat.clone()),
+                MeshMaterial3d(glass_mat),
                 Transform::default(),
             ));
+            if lit {
+                p.spawn((
+                    PointLight {
+                        color: Color::srgb(1.0, 0.72, 0.38),
+                        intensity: LAMP_LUMENS,
+                        range: 12.0,
+                        radius: 0.15,
+                        shadows_enabled: false,
+                        ..default()
+                    },
+                    Transform::from_xyz(0.0, 4.4, 0.0),
+                    Visibility::Hidden,
+                    DistHide { dist: 30.0 },
+                ));
+            }
             p.spawn((
                 Collider::cylinder(0.25, 4.6),
                 Transform::from_xyz(0.0, 2.3, 0.0),
@@ -836,9 +817,21 @@ fn spawn_street(commands: &mut Commands, a: &CityAssets, c: IVec2) -> Vec<Entity
     for k in 0..2 {
         for edge in [near, far] {
             let t = 26.0 + k as f32 * 30.0 + rng.range(-3.0, 3.0);
-            ents.push(spawn_lamp(commands, a, Vec3::new(ox + edge, 0.0, oz + t)));
+            let lit = rng.chance(LAMP_LIT_CHANCE);
+            ents.push(spawn_lamp(
+                commands,
+                a,
+                Vec3::new(ox + edge, 0.0, oz + t),
+                lit,
+            ));
             let t = 26.0 + k as f32 * 30.0 + rng.range(-3.0, 3.0);
-            ents.push(spawn_lamp(commands, a, Vec3::new(ox + t, 0.0, oz + edge)));
+            let lit = rng.chance(LAMP_LIT_CHANCE);
+            ents.push(spawn_lamp(
+                commands,
+                a,
+                Vec3::new(ox + t, 0.0, oz + edge),
+                lit,
+            ));
         }
     }
 
@@ -940,7 +933,7 @@ fn spawn_lot(commands: &mut Commands, a: &CityAssets, c: IVec2, idx: u8) -> Vec<
     let hx_c = -LOT * 0.5 + FRONT + d * 0.5;
     let x_front = hx_c - d * 0.5;
     let back_x = hx_c + d * 0.5 + 0.8;
-    let win_mat = if rng.chance(0.55) {
+    let win_mat = if rng.chance(WINDOW_LIT_CHANCE) {
         a.window_lit.clone()
     } else {
         a.window_dark.clone()
@@ -1085,9 +1078,6 @@ fn spawn_lot(commands: &mut Commands, a: &CityAssets, c: IVec2, idx: u8) -> Vec<
 
     let path_len = step_x - front_edge + 0.1;
     let path_cx = (step_x + front_edge - 0.1) * 0.5;
-    let hf = FENCE_HALF;
-    let seg = hf - FENCE_GAP;
-    let mid = (hf + FENCE_GAP) * 0.5;
 
     let mut ents = Vec::new();
     let root = commands
@@ -1107,12 +1097,6 @@ fn spawn_lot(commands: &mut Commands, a: &CityAssets, c: IVec2, idx: u8) -> Vec<
                 &v.glass,
                 &win_mat,
                 Transform::from_xyz(hx_c, 0.0, 0.0),
-                LOD_HOUSE,
-            ));
-            p.spawn(lod_bundle(
-                &a.fence,
-                &a.vertex_mat,
-                Transform::default(),
                 LOD_HOUSE,
             ));
 
@@ -1138,18 +1122,6 @@ fn spawn_lot(commands: &mut Commands, a: &CityAssets, c: IVec2, idx: u8) -> Vec<
                 p.spawn((
                     Collider::cuboid(1.0, houses::FLOOR_H, 2.5),
                     Transform::from_xyz(x_front - 0.5, houses::FLOOR_H * 0.5, zc),
-                ));
-            }
-            for (size, pos) in [
-                (Vec3::new(0.2, 1.4, seg), Vec3::new(-hf, 0.7, -mid)),
-                (Vec3::new(0.2, 1.4, seg), Vec3::new(-hf, 0.7, mid)),
-                (Vec3::new(0.2, 1.4, 2.0 * hf), Vec3::new(hf, 0.7, 0.0)),
-                (Vec3::new(2.0 * hf, 1.4, 0.2), Vec3::new(0.0, 0.7, -hf)),
-                (Vec3::new(2.0 * hf, 1.4, 0.2), Vec3::new(0.0, 0.7, hf)),
-            ] {
-                p.spawn((
-                    Collider::cuboid(size.x, size.y, size.z),
-                    Transform::from_translation(pos),
                 ));
             }
 
@@ -1260,14 +1232,30 @@ fn spawn_lot(commands: &mut Commands, a: &CityAssets, c: IVec2, idx: u8) -> Vec<
 }
 
 fn make_skybox_image() -> Image {
-    const SIZE: u32 = 512;
+    const SIZE: u32 = 1024;
     let moon_dir = MOON_DIR.normalize();
-    let horizon = Vec3::new(FOG_RGB[0], FOG_RGB[1], FOG_RGB[2]);
-    let zenith = Vec3::new(0.34, 0.36, 0.40);
+    let moon_r = MOON_RADIUS_DEG.to_radians();
+    let moon_right = Vec3::Y.cross(moon_dir).normalize();
+    let moon_up = moon_dir.cross(moon_right);
+    let sun_dir = Vec3::new(0.45, 0.2, 0.87).normalize();
+    let horizon = Vec3::from(HAZE_RGB);
+    let zenith = Vec3::from(ZENITH_RGB);
+
+    let mut crater_rng = GameRng::seeded(0x4D00_4E55);
+    let craters: Vec<(Vec2, f32)> = (0..70)
+        .map(|_| {
+            let a = crater_rng.range(0.0, TAU);
+            let r = crater_rng.f32().sqrt() * 0.92;
+            (
+                Vec2::new(a.cos() * r, a.sin() * r),
+                crater_rng.range(0.025, 0.13),
+            )
+        })
+        .collect();
 
     let mut data: Vec<u8> = Vec::with_capacity((SIZE * SIZE * 4 * 6) as usize);
 
-    for face in 0..6 {
+    for face in 0..6u32 {
         for py in 0..SIZE {
             for px in 0..SIZE {
                 let u = (px as f32 + 0.5) / SIZE as f32 * 2.0 - 1.0;
@@ -1280,24 +1268,67 @@ fn make_skybox_image() -> Image {
                     4 => Vec3::new(u, -v, 1.0),
                     _ => Vec3::new(-u, -v, -1.0),
                 };
-                let d = dir.normalize();
+                let d = Vec3::new(dir.x, dir.y, -dir.z).normalize();
 
-                let t = ((d.y - 0.75) / 0.25).clamp(0.0, 1.0);
-                let t = t * t * (3.0 - 2.0 * t);
+                let t = (d.y / 0.85).clamp(0.0, 1.0);
+                let t = t.powf(0.6);
                 let mut col = horizon.lerp(zenith, t);
 
-                if d.y > 0.0 {
-                    let cos_ang = d.dot(moon_dir);
-                    let glow = ((cos_ang - 0.9) / 0.1).clamp(0.0, 1.0).powi(3) * 0.10;
-                    col += Vec3::new(0.5, 0.55, 0.7) * glow;
+                if d.y > 0.12 {
+                    let h = hash2(px as i32, py as i32, face * 13 + 5);
+                    if h > 0.9985 {
+                        let k = (h - 0.9985) / 0.0015;
+                        let fade = ((d.y - 0.12) / 0.3).clamp(0.0, 1.0);
+                        col += Vec3::new(0.7, 0.75, 0.9) * (0.08 + 0.4 * k * k) * fade;
+                    }
                 }
 
-                data.extend_from_slice(&[
-                    (col.x.clamp(0.0, 1.0) * 255.0) as u8,
-                    (col.y.clamp(0.0, 1.0) * 255.0) as u8,
-                    (col.z.clamp(0.0, 1.0) * 255.0) as u8,
-                    255,
-                ]);
+                let cos_ang = d.dot(moon_dir).clamp(-1.0, 1.0);
+                let ang = cos_ang.acos();
+                if d.y > -0.05 {
+                    let halo = (1.0 - ang / 0.5).clamp(0.0, 1.0);
+                    col +=
+                        Vec3::new(0.30, 0.38, 0.60) * (halo.powi(3) * 0.07 + halo.powi(8) * 0.12);
+                }
+                if ang < moon_r * 1.6 {
+                    let mx = d.dot(moon_right) / moon_r.sin();
+                    let my = d.dot(moon_up) / moon_r.sin();
+                    let rr = (mx * mx + my * my).sqrt();
+                    let edge = ((1.04 - rr) / 0.06).clamp(0.0, 1.0);
+                    if edge > 0.0 {
+                        let rc = rr.min(1.0);
+                        let nz = (1.0 - rc * rc).sqrt();
+                        let normal =
+                            Vec3::new(mx.clamp(-1.0, 1.0), my.clamp(-1.0, 1.0), nz).normalize();
+                        let mut albedo = 0.80;
+                        let maria = fbm(mx * 2.3 + 11.0, my * 2.3 + 5.0, 77);
+                        albedo -= ((maria - 0.46) * 3.0).clamp(0.0, 1.0) * 0.38;
+                        albedo += (fbm(mx * 14.0, my * 14.0, 31) - 0.5) * 0.14;
+                        let p = Vec2::new(mx, my);
+                        let mut relief = 0.0;
+                        for (cc, cr) in &craters {
+                            let q = p.distance(*cc) / cr;
+                            if q < 1.0 {
+                                relief -= (1.0 - q * q) * 0.55;
+                            } else if q < 1.25 {
+                                relief += (1.0 - (q - 1.0) / 0.25) * 0.5;
+                            }
+                        }
+                        albedo = (albedo + relief * 0.22).clamp(0.12, 1.0);
+                        let diffuse = normal.dot(sun_dir).max(0.0).powf(0.8);
+                        let lum = (0.10 + diffuse * 1.0) * albedo * (0.55 + 0.45 * nz.powf(0.3));
+                        let moon_col = Vec3::new(0.93, 0.95, 1.0) * lum;
+                        col = col.lerp(moon_col, edge);
+                    }
+                }
+
+                let jitter = hash2(px as i32, py as i32, face * 31 + 7) - 0.5;
+                let q = |c: f32| {
+                    ((c.clamp(0.0, 1.0) * 255.0 + jitter)
+                        .round()
+                        .clamp(0.0, 255.0)) as u8
+                };
+                data.extend_from_slice(&[q(col.x), q(col.y), q(col.z), 255]);
             }
         }
     }
@@ -1336,6 +1367,17 @@ fn setup_player(mut commands: Commands, mut images: ResMut<Assets<Image>>) {
         ))
         .with_children(|p| {
             p.spawn((
+                Mist,
+                FogVolume {
+                    fog_color: Color::srgb(0.6, 0.7, 1.0),
+                    density_factor: MIST_DENSITY,
+                    light_tint: Color::srgb(0.7, 0.8, 1.0),
+                    light_intensity: 1.0,
+                    ..default()
+                },
+                Transform::from_xyz(0.0, 4.0, 0.0).with_scale(MIST_SIZE),
+            ));
+            p.spawn((
                 Head,
                 Transform::from_xyz(0.0, 0.7, 0.0),
                 Visibility::default(),
@@ -1345,7 +1387,7 @@ fn setup_player(mut commands: Commands, mut images: ResMut<Assets<Image>>) {
                     PlayerCamera,
                     Camera3d::default(),
                     Camera {
-                        clear_color: ClearColorConfig::Custom(FOG_COLOR),
+                        clear_color: ClearColorConfig::Custom(HAZE_COLOR),
                         ..default()
                     },
                     Msaa::Off,
@@ -1356,10 +1398,16 @@ fn setup_player(mut commands: Commands, mut images: ResMut<Assets<Image>>) {
                     }),
                     Transform::default(),
                     DistanceFog {
-                        color: FOG_COLOR,
-                        falloff: FogFalloff::Exponential {
-                            density: FOG_VISIBILITY,
+                        color: HAZE_COLOR,
+                        falloff: FogFalloff::Linear {
+                            start: HAZE_START,
+                            end: HAZE_END,
                         },
+                        ..default()
+                    },
+                    VolumetricFog {
+                        ambient_intensity: 0.0,
+                        step_count: MIST_STEPS,
                         ..default()
                     },
                     Skybox {
@@ -1403,6 +1451,52 @@ fn setup_hud(mut commands: Commands) {
             ..default()
         },
     ));
+    commands.spawn((
+        StatsText,
+        Text::new("..."),
+        TextFont {
+            font_size: 15.0,
+            ..default()
+        },
+        TextColor(Color::srgba(0.9, 0.9, 0.5, 0.8)),
+        Node {
+            position_type: PositionType::Absolute,
+            left: Val::Px(12.0),
+            top: Val::Px(10.0),
+            ..default()
+        },
+    ));
+}
+
+fn update_stats(
+    time: Res<Time>,
+    mut acc: Local<(f32, u32)>,
+    entities: Query<Entity>,
+    bodies: Query<&RigidBody>,
+    chunks: Res<Chunks>,
+    mut text: Single<&mut Text, With<StatsText>>,
+) {
+    acc.0 += time.delta_secs();
+    acc.1 += 1;
+    if acc.0 < 0.5 {
+        return;
+    }
+    let fps = acc.1 as f32 / acc.0;
+    let ms = acc.0 / acc.1 as f32 * 1000.0;
+    let dynamic = bodies
+        .iter()
+        .filter(|b| matches!(b, RigidBody::Dynamic))
+        .count();
+    text.0 = format!(
+        "{:.0} fps ({:.1} ms) | entities {} | dynamic {} | chunks {} | queue {}",
+        fps,
+        ms,
+        entities.iter().count(),
+        dynamic,
+        chunks.loaded.len(),
+        chunks.pending.len()
+    );
+    *acc = (0.0, 0);
 }
 
 fn grab(cursor: &mut CursorOptions) {
@@ -1521,12 +1615,8 @@ fn flashlight_flicker(time: Res<Time>, light: Single<&mut SpotLight, With<Flashl
     light.intensity = FLASHLIGHT_BASE * k;
 }
 
-fn fog_breathing(time: Res<Time>, fog: Single<&mut DistanceFog, With<PlayerCamera>>) {
-    let mut fog = fog.into_inner();
-    let visibility = FOG_VISIBILITY + (time.elapsed_secs() * 0.15).sin();
-    fog.falloff = FogFalloff::ExponentialSquared {
-        density: fog_density(visibility),
-    };
+fn fog_breathing(time: Res<Time>, mut mist: Single<&mut FogVolume, With<Mist>>) {
+    mist.density_factor = MIST_DENSITY * (1.0 + 0.25 * (time.elapsed_secs() * 0.15).sin());
 }
 
 fn animate_leaves(

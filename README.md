@@ -18,9 +18,16 @@ Built with Rust, [Bevy](https://bevy.org) 0.16 and [Avian](https://github.com/Jo
 
 Requires Rust 1.85 or newer.
 
-```
-cargo run
-```
+1. **Clone the repository**
+   
+   ```bash
+   git clone https://github.com/yatsenk/restless-night.git
+   cd restless-night
+   
+3. **Build and Run**
+   
+   ```bash
+   cargo run
 
 ## Controls
 
@@ -31,17 +38,6 @@ cargo run
 | Mouse | Look |
 | F | Toggle flashlight |
 | Esc / Left click | Release / capture cursor |
-
-## Project layout
-
-```
-src/
-  main.rs    app setup, chunk streaming, LOD, player
-  houses.rs  procedural house meshes
-  props.rs   yard and street props
-  mesh.rs    mesh builder
-  util.rs    RNG and color helpers
-```
 
 ## Configuration
 

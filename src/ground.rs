@@ -2,8 +2,9 @@ use std::f32::consts::TAU;
 
 use bevy::prelude::*;
 
+use crate::clutter::{mushroom, rock, twig, weed};
 use crate::mesh::MeshBuilder;
-use crate::util::{Rgba, fbm, hash2, lerp_col, lin, scale_col, vnoise};
+use crate::util::{GameRng, Rgba, fbm, hash2, lerp_col, lin, scale_col, vnoise};
 use crate::{BLOCK_MAX, BLOCK_MIN, CHUNK, CURB_W, LOT, ROAD_W, WALK_IN, WALK_W};
 
 type Rect = (f32, f32, f32, f32);
@@ -64,6 +65,9 @@ fn lawn_color(x: f32, z: f32, s: u32) -> Rgba {
     let mut c = lerp_col(lush, green, mid);
     c = lerp_col(c, dry, smooth(0.42, 0.7, big));
     c = lerp_col(c, dirt, smooth(0.62, 0.78, dirt_m));
+    let drift = fbm(x * 0.09, z * 0.09, s + 90);
+    let leafy = lin(0.34, 0.14, 0.04);
+    c = lerp_col(c, leafy, 0.55 * smooth(0.45, 0.72, drift));
     scale_col(c, 0.85 + 0.3 * fine)
 }
 
@@ -176,25 +180,30 @@ fn curb_run(b: &mut MeshBuilder, rect: Rect, along_z: bool, s: u32) {
     }
 }
 
-pub fn build_street(variant: u32) -> Mesh {
+pub fn build_street(variant: u32, lite: bool) -> Mesh {
     let s = variant;
     let mut b = MeshBuilder::default();
-    let (houses, paths) = lot_rects();
     let n = CHUNK as i32;
     let stride = (n + 1) as usize;
 
+    let step: i32 = if lite { 2 } else { 1 };
     let mut vid = vec![u32::MAX; stride * stride];
-    for gx in 0..n {
-        for gz in 0..n {
+    for gx in (0..n).step_by(step as usize) {
+        for gz in (0..n).step_by(step as usize) {
             let x0 = gx as f32;
             let z0 = gz as f32;
-            if x0 + 1.0 <= ROAD_W || z0 + 1.0 <= ROAD_W {
+            if x0 + step as f32 <= ROAD_W || z0 + step as f32 <= ROAD_W {
                 continue;
             }
             let mut ids = [0u32; 4];
-            for (k, (cx, cz)) in [(gx, gz), (gx + 1, gz), (gx + 1, gz + 1), (gx, gz + 1)]
-                .iter()
-                .enumerate()
+            for (k, (cx, cz)) in [
+                (gx, gz),
+                (gx + step, gz),
+                (gx + step, gz + step),
+                (gx, gz + step),
+            ]
+            .iter()
+            .enumerate()
             {
                 let slot = *cz as usize * stride + *cx as usize;
                 if vid[slot] == u32::MAX {
@@ -249,52 +258,54 @@ pub fn build_street(variant: u32) -> Mesh {
     }
 
     let asphalt = lin(0.075, 0.075, 0.085);
-    for i in 0..16 {
-        let on_x = hash2(i, 1, s + 50) < 0.5;
-        let (rx, rz) = if on_x {
-            (
-                hash2(i, 2, s + 50) * (CHUNK - 4.0),
-                hash2(i, 3, s + 50) * (ROAD_W - 2.0),
-            )
-        } else {
-            (
-                hash2(i, 2, s + 51) * (ROAD_W - 2.0),
-                ROAD_W + hash2(i, 3, s + 51) * (CHUNK - ROAD_W - 4.0),
-            )
-        };
-        let w = 1.4 + 1.2 * hash2(i, 4, s + 50);
-        let d = 0.9 + 0.7 * hash2(i, 5, s + 50);
-        let (w, d) = if on_x { (w, d) } else { (d, w) };
-        flat_quad(
-            &mut b,
-            rx,
-            rz,
-            rx + w,
-            rz + d,
-            0.032,
-            scale_col(asphalt, 0.75),
-        );
-    }
-    for i in 0..44 {
-        let on_x = hash2(i, 6, s + 52) < 0.5;
-        let mut p = if on_x {
-            Vec2::new(
-                hash2(i, 7, s + 52) * CHUNK,
-                0.3 + hash2(i, 8, s + 52) * (ROAD_W - 0.6),
-            )
-        } else {
-            Vec2::new(
-                0.3 + hash2(i, 7, s + 53) * (ROAD_W - 0.6),
-                ROAD_W + hash2(i, 8, s + 53) * (CHUNK - ROAD_W),
-            )
-        };
-        let mut a = hash2(i, 9, s + 52) * TAU;
-        for k in 0..5 {
-            let len = 0.4 + 0.6 * hash2(i, 10 + k, s + 52);
-            let q = p + Vec2::new(a.cos(), a.sin()) * len;
-            line_quad(&mut b, p, q, 0.035, 0.034, scale_col(asphalt, 0.4));
-            p = q;
-            a += (hash2(i, 30 + k, s + 52) - 0.5) * 1.4;
+    if !lite {
+        for i in 0..16 {
+            let on_x = hash2(i, 1, s + 50) < 0.5;
+            let (rx, rz) = if on_x {
+                (
+                    hash2(i, 2, s + 50) * (CHUNK - 4.0),
+                    hash2(i, 3, s + 50) * (ROAD_W - 2.0),
+                )
+            } else {
+                (
+                    hash2(i, 2, s + 51) * (ROAD_W - 2.0),
+                    ROAD_W + hash2(i, 3, s + 51) * (CHUNK - ROAD_W - 4.0),
+                )
+            };
+            let w = 1.4 + 1.2 * hash2(i, 4, s + 50);
+            let d = 0.9 + 0.7 * hash2(i, 5, s + 50);
+            let (w, d) = if on_x { (w, d) } else { (d, w) };
+            flat_quad(
+                &mut b,
+                rx,
+                rz,
+                rx + w,
+                rz + d,
+                0.032,
+                scale_col(asphalt, 0.75),
+            );
+        }
+        for i in 0..44 {
+            let on_x = hash2(i, 6, s + 52) < 0.5;
+            let mut p = if on_x {
+                Vec2::new(
+                    hash2(i, 7, s + 52) * CHUNK,
+                    0.3 + hash2(i, 8, s + 52) * (ROAD_W - 0.6),
+                )
+            } else {
+                Vec2::new(
+                    0.3 + hash2(i, 7, s + 53) * (ROAD_W - 0.6),
+                    ROAD_W + hash2(i, 8, s + 53) * (CHUNK - ROAD_W),
+                )
+            };
+            let mut a = hash2(i, 9, s + 52) * TAU;
+            for k in 0..5 {
+                let len = 0.4 + 0.6 * hash2(i, 10 + k, s + 52);
+                let q = p + Vec2::new(a.cos(), a.sin()) * len;
+                line_quad(&mut b, p, q, 0.035, 0.034, scale_col(asphalt, 0.4));
+                p = q;
+                a += (hash2(i, 30 + k, s + 52) - 0.5) * 1.4;
+            }
         }
     }
 
@@ -354,10 +365,23 @@ pub fn build_street(variant: u32) -> Mesh {
         flat_quad(&mut b, t, 4.9, t + 3.0, 5.1, 0.036, yellow);
         t += 6.0;
     }
-    for (x, z) in [(42.0_f32, 2.6_f32), (2.6, 55.0), (66.0, 7.4)] {
-        b.disc(Vec3::new(x, 0.038, z), 0.5, 12, true, lin(0.12, 0.12, 0.13));
-        b.disc(Vec3::new(x, 0.04, z), 0.38, 12, true, lin(0.18, 0.18, 0.19));
+    if !lite {
+        for (x, z) in [(42.0_f32, 2.6_f32), (2.6, 55.0), (66.0, 7.4)] {
+            b.disc(Vec3::new(x, 0.038, z), 0.5, 12, true, lin(0.12, 0.12, 0.13));
+            b.disc(Vec3::new(x, 0.04, z), 0.38, 12, true, lin(0.18, 0.18, 0.19));
+        }
     }
+
+    b.build()
+}
+
+pub fn build_litter(variant: u32) -> [Mesh; 4] {
+    let s = variant;
+    let mut bs: [MeshBuilder; 4] = std::array::from_fn(|_| MeshBuilder::default());
+    let (houses, paths) = lot_rects();
+    let n = CHUNK as i32;
+    let quad_of =
+        |x: f32, z: f32| -> usize { (x >= CHUNK * 0.5) as usize + 2 * (z >= CHUNK * 0.5) as usize };
 
     for gx in 0..n {
         for gz in 0..n {
@@ -379,7 +403,7 @@ pub fn build_street(variant: u32) -> Mesh {
                 let base = scale_col(c, 0.7);
                 let tip = lerp_col(scale_col(c, 1.5), lin(0.45, 0.38, 0.18), 0.4);
                 tuft(
-                    &mut b,
+                    &mut bs[quad_of(fx, fz)],
                     Vec3::new(fx, lawn_height(fx, fz, s), fz),
                     gx * 131 + gz * 7 + k,
                     base,
@@ -397,7 +421,7 @@ pub fn build_street(variant: u32) -> Mesh {
         [0.28, 0.12, 0.04],
         [0.70, 0.30, 0.05],
     ];
-    for i in 0..4600 {
+    for i in 0..7000 {
         let x = hash2(i, 1, s + 70) * CHUNK;
         let z = hash2(i, 2, s + 71) * CHUNK;
         let drift = fbm(x * 0.09, z * 0.09, s + 90);
@@ -416,7 +440,7 @@ pub fn build_street(variant: u32) -> Mesh {
         let perp = Vec3::new(-dir.z, 0.0, dir.x);
         let c = Vec3::new(x, y, z);
         let lift = 0.02 * hash2(i, 8, s + 77);
-        b.quad_c(
+        bs[quad_of(x, z)].quad_c(
             [
                 c + dir * (len * 0.5),
                 c + perp * (len * 0.3) + Vec3::Y * lift,
@@ -428,5 +452,87 @@ pub fn build_street(variant: u32) -> Mesh {
         );
     }
 
-    b.build()
+    let mut rng = GameRng::seeded(0x51A7_0000 + s as u64 * 977);
+    let open = |x: f32, z: f32| {
+        lawn_set(x) && lawn_set(z) && !in_rects(x, z, &houses) && !in_rects(x, z, &paths)
+    };
+    for _ in 0..260 {
+        let x = rng.range(0.0, CHUNK);
+        let z = rng.range(0.0, CHUNK);
+        if !open(x, z) {
+            continue;
+        }
+        let y = lawn_height(x, z, s);
+        let r = rng.range(0.03, 0.12);
+        rock(
+            &mut bs[quad_of(x, z)],
+            &mut rng,
+            Vec3::new(x, y - 0.01, z),
+            r,
+        );
+    }
+    for _ in 0..110 {
+        let x = rng.range(0.0, CHUNK);
+        let z = rng.range(0.0, CHUNK);
+        if !open(x, z) {
+            continue;
+        }
+        let y = lawn_height(x, z, s) + 0.02;
+        let len = rng.range(0.3, 1.0);
+        twig(&mut bs[quad_of(x, z)], &mut rng, Vec3::new(x, y, z), len);
+    }
+    for _ in 0..18 {
+        let cx = rng.range(0.0, CHUNK);
+        let cz = rng.range(0.0, CHUNK);
+        if !open(cx, cz) {
+            continue;
+        }
+        for _ in 0..3 {
+            let x = cx + rng.range(-0.25, 0.25);
+            let z = cz + rng.range(-0.25, 0.25);
+            if !open(x, z) {
+                continue;
+            }
+            let y = lawn_height(x, z, s);
+            mushroom(&mut bs[quad_of(x, z)], &mut rng, Vec3::new(x, y, z));
+        }
+    }
+    let weed_base = lin(0.12, 0.12, 0.05);
+    let weed_tip = lin(0.45, 0.38, 0.18);
+    let edges = [
+        ROAD_W + CURB_W + 0.1,
+        WALK_IN - 0.12,
+        BLOCK_MIN + 0.12,
+        BLOCK_MAX + WALK_W + 0.1,
+        CHUNK - CURB_W - 0.1,
+    ];
+    for e in edges {
+        let mut t = ROAD_W;
+        while t < CHUNK {
+            for along_z in [true, false] {
+                if rng.chance(0.5) {
+                    let (x, z) = if along_z {
+                        (e + rng.range(-0.08, 0.08), t)
+                    } else {
+                        (t, e + rng.range(-0.08, 0.08))
+                    };
+                    if open(x, z) {
+                        let y = lawn_height(x, z, s);
+                        let hgt = rng.range(0.15, 0.4);
+                        weed(
+                            &mut bs[quad_of(x, z)],
+                            &mut rng,
+                            Vec3::new(x, y, z),
+                            hgt,
+                            weed_base,
+                            weed_tip,
+                        );
+                    }
+                }
+            }
+            t += 1.4;
+        }
+    }
+
+    bs.map(|b| b.build())
 }

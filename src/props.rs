@@ -2,8 +2,9 @@ use std::f32::consts::{PI, TAU};
 
 use bevy::prelude::*;
 
+use crate::clutter::leaf_card;
 use crate::mesh::MeshBuilder;
-use crate::util::{GameRng, Rgba, lerp_col, lin, scale_col};
+use crate::util::{lerp_col, lin, scale_col, GameRng, Rgba};
 
 const LEAF_TONES: [([f32; 3], [f32; 3]); 4] = [
     ([0.40, 0.12, 0.02], [0.80, 0.38, 0.05]),
@@ -403,10 +404,13 @@ fn grow_branch(
     sides: u32,
     bark: (Rgba, Rgba),
     tips: &mut Vec<Vec3>,
+    min_draw: u32,
 ) {
     let end = start + dir * len;
     let r_end = r * 0.62;
-    b.tube(start, end, r, r_end, sides, bark.0, bark.1);
+    if depth >= min_draw {
+        b.tube(start, end, r, r_end, sides, bark.0, bark.1);
+    }
     if depth == 0 {
         tips.push(end);
         return;
@@ -431,6 +435,7 @@ fn grow_branch(
             sides,
             bark,
             tips,
+            min_draw,
         );
     }
 }
@@ -442,7 +447,8 @@ pub fn build_tree(seed: u64, detail: bool, leafy: bool) -> (Mesh, f32, f32) {
     let bark_dark = lin(0.07, 0.055, 0.045);
     let bark_light = lin(0.17, 0.14, 0.11);
     let sides = if detail { 8 } else { 5 };
-    let depth = if detail { 3 } else { 1 };
+    let depth = 3;
+    let min_draw = if detail { 0 } else { 1 };
 
     let h = rng.range(7.0, 9.5);
     let r0 = rng.range(0.3, 0.42);
@@ -458,10 +464,12 @@ pub fn build_tree(seed: u64, detail: bool, leafy: bool) -> (Mesh, f32, f32) {
         bark_light,
     );
     b.tube(mid, top, r0 * 0.8, r0 * 0.3, sides, bark_light, bark_dark);
-    let roots = if detail { 6 } else { 3 };
-    for i in 0..roots {
-        let a = i as f32 / roots as f32 * TAU + rng.range(-0.3, 0.3);
+    for i in 0..6 {
+        let a = i as f32 / 6.0 * TAU + rng.range(-0.3, 0.3);
         let (s, co) = a.sin_cos();
+        if !detail && i % 2 == 1 {
+            continue;
+        }
         b.tube(
             Vec3::new(co * r0 * 0.7, 0.6, s * r0 * 0.7),
             Vec3::new(co * r0 * 2.4, -0.1, s * r0 * 2.4),
@@ -489,6 +497,7 @@ pub fn build_tree(seed: u64, detail: bool, leafy: bool) -> (Mesh, f32, f32) {
             sides.min(6),
             (bark_light, bark_dark),
             &mut tips,
+            min_draw,
         );
     }
     grow_branch(
@@ -502,18 +511,21 @@ pub fn build_tree(seed: u64, detail: bool, leafy: bool) -> (Mesh, f32, f32) {
         sides.min(6),
         (bark_light, bark_dark),
         &mut tips,
+        min_draw,
     );
     if leafy {
         let (d, l) = LEAF_TONES[(seed % LEAF_TONES.len() as u64) as usize];
         let dark = lin(d[0], d[1], d[2]);
         let light = lin(l[0], l[1], l[2]);
         let (rings, segs) = if detail { (8, 13) } else { (4, 7) };
-        let max_tips = if detail { 14 } else { 6 };
+        let max_tips = 14;
         let step = (tips.len() / max_tips).max(1);
+        let mut blobs: Vec<(Vec3, f32)> = Vec::new();
         for (i, tip) in tips.iter().enumerate().step_by(step) {
             let radius = rng.range(1.2, 1.8);
+            let center = *tip + Vec3::Y * radius * 0.3;
             b.blob(
-                *tip + Vec3::Y * radius * 0.3,
+                center,
                 radius,
                 0.75,
                 dark,
@@ -522,10 +534,13 @@ pub fn build_tree(seed: u64, detail: bool, leafy: bool) -> (Mesh, f32, f32) {
                 segs,
                 i as f32 * 1.7 + (seed % 97) as f32,
             );
+            blobs.push((center, radius));
         }
+        let top_r = rng.range(1.6, 2.1);
+        let top_c = top + Vec3::Y * 1.0;
         b.blob(
-            top + Vec3::Y * 1.0,
-            rng.range(1.6, 2.1),
+            top_c,
+            top_r,
             0.8,
             dark,
             light,
@@ -533,104 +548,29 @@ pub fn build_tree(seed: u64, detail: bool, leafy: bool) -> (Mesh, f32, f32) {
             segs,
             (seed % 53) as f32,
         );
-    }
-    (b.build(), r0, 4.5)
-}
-
-pub fn build_car(color: [f32; 3], detail: bool) -> Mesh {
-    let mut b = MeshBuilder::default();
-    let body = lin(color[0], color[1], color[2]);
-    let dark = lin(0.03, 0.035, 0.04);
-    let glass = lin(0.07, 0.09, 0.11);
-    let tire = lin(0.02, 0.02, 0.02);
-    let chrome = lin(0.55, 0.55, 0.55);
-    b.cuboid(
-        Vec3::new(-2.2, 0.38, -0.92),
-        Vec3::new(2.2, 1.0, 0.92),
-        body,
-    );
-    b.cuboid(
-        Vec3::new(-1.0, 1.0, -0.84),
-        Vec3::new(1.15, 1.62, 0.84),
-        scale_col(body, 0.95),
-    );
-    b.cuboid(
-        Vec3::new(-2.25, 0.3, -0.95),
-        Vec3::new(-2.15, 0.6, 0.95),
-        chrome,
-    );
-    b.cuboid(
-        Vec3::new(2.15, 0.3, -0.95),
-        Vec3::new(2.25, 0.6, 0.95),
-        chrome,
-    );
-    b.cuboid(
-        Vec3::new(-1.0, 1.62, -0.8),
-        Vec3::new(1.1, 1.67, 0.8),
-        scale_col(body, 0.8),
-    );
-    for sz in [-1.0_f32, 1.0] {
-        let za = sz * 0.83;
-        let zb = sz * 0.87;
-        b.cuboid(
-            Vec3::new(-0.9, 1.05, za.min(zb)),
-            Vec3::new(1.0, 1.55, za.max(zb)),
-            glass,
-        );
-    }
-    b.cuboid(
-        Vec3::new(-1.03, 1.05, -0.78),
-        Vec3::new(-0.98, 1.55, 0.78),
-        glass,
-    );
-    b.cuboid(
-        Vec3::new(1.12, 1.05, -0.78),
-        Vec3::new(1.17, 1.55, 0.78),
-        glass,
-    );
-    let sides = if detail { 12 } else { 6 };
-    for sx in [-1.35_f32, 1.4] {
-        for sz in [-0.88_f32, 0.88] {
-            b.tube(
-                Vec3::new(sx, 0.36, sz - 0.12),
-                Vec3::new(sx, 0.36, sz + 0.12),
-                0.36,
-                0.36,
-                sides,
-                tire,
-                tire,
-            );
-            if detail {
-                b.tube(
-                    Vec3::new(sx, 0.36, sz - 0.13 * sz.signum() + 0.0),
-                    Vec3::new(sx, 0.36, sz + 0.125 * sz.signum()),
-                    0.2,
-                    0.2,
-                    8,
-                    chrome,
-                    chrome,
-                );
+        blobs.push((top_c, top_r));
+        if detail {
+            let mut lr = GameRng::seeded(seed ^ 0xBEEF_F00D);
+            for (c, r) in &blobs {
+                for _ in 0..64 {
+                    let dir = Vec3::new(
+                        lr.range(-1.0, 1.0),
+                        lr.range(-0.7, 1.0),
+                        lr.range(-1.0, 1.0),
+                    )
+                    .normalize_or_zero();
+                    let pos = *c + Vec3::new(dir.x * r, dir.y * r * 0.75, dir.z * r) * 0.98;
+                    let size = lr.range(0.2, 0.34);
+                    let phi = lr.range(0.0, TAU);
+                    let tangent = dir
+                        .cross(Vec3::new(phi.cos(), 0.3, phi.sin()))
+                        .normalize_or_zero();
+                    let bitangent = dir.cross(tangent).normalize_or_zero();
+                    let col = scale_col(lerp_col(dark, light, lr.f32()), lr.range(0.85, 1.2));
+                    leaf_card(&mut b, pos, tangent * size, bitangent * size * 0.6, col);
+                }
             }
         }
     }
-    if detail {
-        for sz in [-0.65_f32, 0.65] {
-            b.cuboid(
-                Vec3::new(-2.22, 0.65, sz - 0.18),
-                Vec3::new(-2.16, 0.82, sz + 0.18),
-                lin(0.95, 0.9, 0.6),
-            );
-            b.cuboid(
-                Vec3::new(2.16, 0.65, sz - 0.18),
-                Vec3::new(2.22, 0.82, sz + 0.18),
-                lin(0.5, 0.05, 0.04),
-            );
-        }
-        b.cuboid(
-            Vec3::new(-2.2, 0.38, -0.92),
-            Vec3::new(2.2, 0.48, 0.92),
-            dark,
-        );
-    }
-    b.build()
+    (b.build(), r0, 4.5)
 }

@@ -1,3 +1,4 @@
+use bevy::prelude::*;
 use std::f32::consts::{PI, TAU};
 
 use bevy::prelude::*;
@@ -17,16 +18,46 @@ fn tree(b: &mut MeshBuilder, base: Vec3, scale: f32, leafy: bool, tone: f32) {
     let trunk = lin(0.08, 0.06, 0.045);
     b.tube(
         base,
-        base + Vec3::Y * h * 0.7,
+        base + Vec3::Y * h * 0.75,
         0.4 * scale,
-        0.16 * scale,
+        0.14 * scale,
         5,
         trunk,
         trunk,
     );
     if leafy {
-        let col = lerp_col(lin(0.26, 0.10, 0.04), lin(0.52, 0.26, 0.06), tone);
-        b.pyramid(base + Vec3::Y * h * 0.32, h * 0.34, h * 0.34, h * 0.72, col);
+        let dark = lerp_col(lin(0.26, 0.10, 0.04), lin(0.40, 0.14, 0.04), tone);
+        let light = lerp_col(lin(0.52, 0.26, 0.06), lin(0.74, 0.40, 0.08), tone);
+        b.blob(
+            base + Vec3::Y * h * 0.72,
+            h * 0.27,
+            0.85,
+            dark,
+            light,
+            4,
+            7,
+            tone * 9.0,
+        );
+        b.blob(
+            base + Vec3::new(h * 0.13, h * 0.55, h * 0.05),
+            h * 0.2,
+            0.85,
+            dark,
+            light,
+            3,
+            6,
+            tone * 5.0,
+        );
+        b.blob(
+            base + Vec3::new(-h * 0.12, h * 0.52, -h * 0.07),
+            h * 0.2,
+            0.85,
+            dark,
+            light,
+            3,
+            6,
+            tone * 3.0,
+        );
     } else {
         let col = lin(0.06, 0.05, 0.04);
         b.pyramid(base + Vec3::Y * h * 0.4, h * 0.2, h * 0.2, h * 0.68, col);

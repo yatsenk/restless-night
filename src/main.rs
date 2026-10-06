@@ -1,3 +1,4 @@
+mod clutter;
 mod far;
 mod ground;
 mod houses;
@@ -6,7 +7,7 @@ mod props;
 mod util;
 
 use std::collections::{HashMap, HashSet, VecDeque};
-use std::f32::consts::{FRAC_PI_2, PI, TAU};
+use std::f32::consts::{PI, TAU};
 
 use avian3d::prelude::*;
 use bevy::{
@@ -26,7 +27,7 @@ use bevy::{
     window::{CursorGrabMode, CursorOptions, PrimaryWindow},
 };
 
-use houses::{Dims, build_house};
+use houses::{build_house, Dims};
 use props::*;
 use util::*;
 
@@ -38,7 +39,7 @@ const HAZE_END: f32 = 310.0;
 const FAR_PLANE: f32 = 340.0;
 
 const MIST_DENSITY: f32 = 0.03;
-const MIST_STEPS: u32 = 64;
+const MIST_STEPS: u32 = 40;
 const MIST_SIZE: Vec3 = Vec3::new(110.0, 14.0, 110.0);
 
 const CHUNK: f32 = 80.0;
@@ -52,15 +53,20 @@ const BLOCK_MAX: f32 = CHUNK - BLOCK_MIN + ROAD_W;
 const LOT: f32 = (BLOCK_MAX - BLOCK_MIN) * 0.5;
 const FRONT: f32 = 7.2;
 
-const LOAD_DIST: f32 = 56.0;
-const UNLOAD_DIST: f32 = 76.0;
+const LOAD_DIST: f32 = 130.0;
+const UNLOAD_DIST: f32 = 155.0;
 const FAR_LOAD_DIST: f32 = 300.0;
 const FAR_UNLOAD_DIST: f32 = 340.0;
 const FAR_BUDGET: usize = 3;
 
-const LOD_HOUSE: f32 = 28.0;
-const LOD_PROP: f32 = 12.0;
-const LOD_HYST: f32 = 1.5;
+const LOD_HOUSE: f32 = 55.0;
+const LOD_TREE: f32 = 95.0;
+const LOD_PROP: f32 = 22.0;
+const LOD_HYST: f32 = 3.0;
+const GROUND_FULL: f32 = 55.0;
+const LITTER_DIST: f32 = 48.0;
+const DETAIL_DIST: f32 = 50.0;
+const PROP_CULL: f32 = 95.0;
 
 const MOON_DIR: Vec3 = Vec3::new(-0.5, 0.38, -0.75);
 
@@ -118,6 +124,14 @@ struct Lod {
 }
 
 #[derive(Component)]
+struct GroundTier {
+    min: Vec2,
+    max: Vec2,
+    from: f32,
+    to: f32,
+}
+
+#[derive(Component)]
 struct DistHide {
     dist: f32,
 }
@@ -135,9 +149,16 @@ struct LodMesh {
     far: Handle<Mesh>,
 }
 
+struct StreetMeshes {
+    full: Handle<Mesh>,
+    lite: Handle<Mesh>,
+    litter: Vec<Handle<Mesh>>,
+}
+
 struct HouseVariant {
     body: LodMesh,
     glass: LodMesh,
+    detail: Handle<Mesh>,
     dims: Dims,
 }
 
@@ -164,7 +185,7 @@ struct CityAssets {
     lamp_glass_mat: Handle<StandardMaterial>,
     far_glow_mat: Handle<StandardMaterial>,
     unit_cube: Handle<Mesh>,
-    streets: Vec<Handle<Mesh>>,
+    streets: Vec<StreetMeshes>,
     graves: Vec<LodMesh>,
     bushes: Vec<LodMesh>,
     hay: LodMesh,
@@ -173,7 +194,6 @@ struct CityAssets {
     lamp_pole: Handle<Mesh>,
     lamp_glass: Handle<Mesh>,
     mailbox: Handle<Mesh>,
-    cars: Vec<LodMesh>,
     houses: Vec<HouseVariant>,
     trees: Vec<TreeVariant>,
     pumpkins: Vec<PumpkinVariant>,
@@ -237,7 +257,17 @@ fn build_assets(meshes: &mut Assets<Mesh>, materials: &mut Assets<StandardMateri
     });
 
     let streets = (0..4)
-        .map(|i| meshes.add(ground::build_street(i * 7 + 3)))
+        .map(|i| {
+            let seed = i * 7 + 3;
+            StreetMeshes {
+                full: meshes.add(ground::build_street(seed, false)),
+                lite: meshes.add(ground::build_street(seed, true)),
+                litter: ground::build_litter(seed)
+                    .into_iter()
+                    .map(|m| meshes.add(m))
+                    .collect(),
+            }
+        })
         .collect();
 
     let graves = (0..3)
@@ -267,17 +297,6 @@ fn build_assets(meshes: &mut Assets<Mesh>, materials: &mut Assets<StandardMateri
     let lamp_glass = meshes.add(build_lamp_glass());
     let mailbox = meshes.add(build_mailbox());
 
-    let car_colors = [
-        [0.14, 0.20, 0.30],
-        [0.35, 0.15, 0.08],
-        [0.15, 0.25, 0.18],
-        [0.55, 0.55, 0.50],
-    ];
-    let cars = car_colors
-        .iter()
-        .map(|c| lod_mesh(meshes, build_car(*c, true), build_car(*c, false)))
-        .collect();
-
     let houses = (0..8)
         .map(|i| {
             let seed = 0xC17E + i as u64 * 7919;
@@ -292,6 +311,7 @@ fn build_assets(meshes: &mut Assets<Mesh>, materials: &mut Assets<StandardMateri
                     near: meshes.add(near.glass),
                     far: meshes.add(far.glass),
                 },
+                detail: meshes.add(clutter::build_house_detail(seed, dims)),
                 dims,
             }
         })
@@ -357,7 +377,6 @@ fn build_assets(meshes: &mut Assets<Mesh>, materials: &mut Assets<StandardMateri
         lamp_pole,
         lamp_glass,
         mailbox,
-        cars,
         houses,
         trees,
         pumpkins,
@@ -420,10 +439,10 @@ fn setup_world(
             ..default()
         },
         CascadeShadowConfigBuilder {
-            num_cascades: 3,
+            num_cascades: 2,
             minimum_distance: 0.1,
-            maximum_distance: 70.0,
-            first_cascade_far_bound: 8.0,
+            maximum_distance: 60.0,
+            first_cascade_far_bound: 14.0,
             overlap_proportion: 0.2,
         }
         .build(),
@@ -519,7 +538,16 @@ fn stream_chunks(
 
     let mut budget = 2;
     while budget > 0 {
-        let Some((c, stage)) = chunks.pending.pop_front() else {
+        let Some(best) = chunks
+            .pending
+            .iter()
+            .enumerate()
+            .min_by(|a, b| dist_to_chunk(p, a.1 .0).total_cmp(&dist_to_chunk(p, b.1 .0)))
+            .map(|(i, _)| i)
+        else {
+            break;
+        };
+        let Some((c, stage)) = chunks.pending.remove(best) else {
             break;
         };
         let Some(list) = chunks.loaded.get_mut(&c) else {
@@ -617,14 +645,16 @@ fn update_lod(
     mut acc: Local<f32>,
     player: Single<&Transform, With<Player>>,
     mut lods: Query<(&GlobalTransform, &mut Lod, &mut Mesh3d)>,
-    mut hides: Query<(&GlobalTransform, &DistHide, &mut Visibility)>,
+    mut hides: Query<(&GlobalTransform, &DistHide, &mut Visibility), Without<GroundTier>>,
+    mut tiers: Query<(&GroundTier, &mut Visibility)>,
 ) {
     *acc += time.delta_secs();
-    if *acc < 0.12 {
+    if *acc < 0.1 {
         return;
     }
     *acc = 0.0;
     let p = player.translation;
+    let pxz = Vec2::new(p.x, p.z);
     for (gt, mut lod, mut mesh) in &mut lods {
         let d = gt.translation().distance(p);
         if lod.is_near {
@@ -635,6 +665,20 @@ fn update_lod(
         } else if d < lod.dist {
             lod.is_near = true;
             mesh.0 = lod.near.clone();
+        }
+    }
+    for (t, mut vis) in &mut tiers {
+        let d = pxz.clamp(t.min, t.max).distance(pxz);
+        let shown = *vis != Visibility::Hidden;
+        let slack = if shown { 3.0 } else { 0.0 };
+        let want = d + slack >= t.from && d - slack < t.to;
+        let target = if want {
+            Visibility::Inherited
+        } else {
+            Visibility::Hidden
+        };
+        if *vis != target {
+            *vis = target;
         }
     }
     for (gt, h, mut vis) in &mut hides {
@@ -690,7 +734,7 @@ fn spawn_tree(
                 &v.mesh,
                 &a.vertex_mat,
                 Transform::from_xyz(0.0, -ch * 0.5, 0.0).with_scale(Vec3::splat(s)),
-                LOD_PROP + 4.0,
+                LOD_TREE,
             ));
         })
         .id()
@@ -725,7 +769,7 @@ fn spawn_pumpkin(
                     MeshMaterial3d(a.face_mat.clone()),
                     Transform::default(),
                     Visibility::Hidden,
-                    DistHide { dist: 12.0 },
+                    DistHide { dist: 16.0 },
                 ));
             }
         })
@@ -774,26 +818,6 @@ fn spawn_lamp(commands: &mut Commands, a: &CityAssets, pos: Vec3, lit: bool) -> 
         .id()
 }
 
-fn spawn_car(commands: &mut Commands, a: &CityAssets, idx: usize, pos: Vec3, yaw: f32) -> Entity {
-    commands
-        .spawn((
-            lod_bundle(
-                &a.cars[idx],
-                &a.vertex_mat,
-                Transform::from_translation(pos).with_rotation(Quat::from_rotation_y(yaw)),
-                LOD_PROP + 4.0,
-            ),
-            RigidBody::Static,
-        ))
-        .with_children(|p| {
-            p.spawn((
-                Collider::cuboid(4.5, 1.7, 1.9),
-                Transform::from_xyz(0.0, 0.85, 0.0),
-            ));
-        })
-        .id()
-}
-
 fn spawn_street(commands: &mut Commands, a: &CityAssets, c: IVec2) -> Vec<Entity> {
     let mut rng = GameRng::seeded(chunk_seed(c));
     let mut ents = Vec::new();
@@ -801,15 +825,66 @@ fn spawn_street(commands: &mut Commands, a: &CityAssets, c: IVec2) -> Vec<Entity
     let oz = c.y as f32 * CHUNK;
 
     let variant = ((hash2(c.x, c.y, 5) * 4.0) as usize).min(3);
+    let st = &a.streets[variant];
+    let origin = Transform::from_xyz(ox, 0.0, oz);
+    let whole = (Vec2::new(ox, oz), Vec2::new(ox + CHUNK, oz + CHUNK));
     ents.push(
         commands
             .spawn((
-                Mesh3d(a.streets[variant].clone()),
+                Mesh3d(st.full.clone()),
                 MeshMaterial3d(a.vertex_mat.clone()),
-                Transform::from_xyz(ox, 0.0, oz),
+                origin,
+                NotShadowCaster,
+                Visibility::Hidden,
+                GroundTier {
+                    min: whole.0,
+                    max: whole.1,
+                    from: 0.0,
+                    to: GROUND_FULL,
+                },
             ))
             .id(),
     );
+    ents.push(
+        commands
+            .spawn((
+                Mesh3d(st.lite.clone()),
+                MeshMaterial3d(a.vertex_mat.clone()),
+                origin,
+                NotShadowCaster,
+                Visibility::Hidden,
+                GroundTier {
+                    min: whole.0,
+                    max: whole.1,
+                    from: GROUND_FULL,
+                    to: f32::MAX,
+                },
+            ))
+            .id(),
+    );
+    for (qi, lm) in st.litter.iter().enumerate() {
+        let qmin = Vec2::new(
+            ox + (qi % 2) as f32 * CHUNK * 0.5,
+            oz + (qi / 2) as f32 * CHUNK * 0.5,
+        );
+        ents.push(
+            commands
+                .spawn((
+                    Mesh3d(lm.clone()),
+                    MeshMaterial3d(a.vertex_mat.clone()),
+                    origin,
+                    NotShadowCaster,
+                    Visibility::Hidden,
+                    GroundTier {
+                        min: qmin,
+                        max: qmin + Vec2::splat(CHUNK * 0.5),
+                        from: 0.0,
+                        to: LITTER_DIST,
+                    },
+                ))
+                .id(),
+        );
+    }
 
     let near = ROAD_W + CURB_W + STRIP_W * 0.5;
     let far = CHUNK - CURB_W - STRIP_W * 0.5;
@@ -866,33 +941,6 @@ fn spawn_street(commands: &mut Commands, a: &CityAssets, c: IVec2) -> Vec<Entity
                 ));
             }
         }
-    }
-
-    if rng.chance(0.4) {
-        let t = rng.range(20.0, 70.0);
-        let lane = if rng.chance(0.5) { 2.5 } else { 7.5 };
-        let yaw = if lane < 5.0 { 0.0 } else { PI } + rng.range(-0.1, 0.1);
-        let idx = rng.pick(a.cars.len());
-        ents.push(spawn_car(
-            commands,
-            a,
-            idx,
-            Vec3::new(ox + t, 0.03, oz + lane + rng.range(-0.5, 0.5)),
-            yaw,
-        ));
-    }
-    if rng.chance(0.4) {
-        let t = rng.range(20.0, 70.0);
-        let lane = if rng.chance(0.5) { 2.5 } else { 7.5 };
-        let yaw = if lane < 5.0 { FRAC_PI_2 } else { -FRAC_PI_2 } + rng.range(-0.1, 0.1);
-        let idx = rng.pick(a.cars.len());
-        ents.push(spawn_car(
-            commands,
-            a,
-            idx,
-            Vec3::new(ox + lane + rng.range(-0.5, 0.5), 0.03, oz + t),
-            yaw,
-        ));
     }
 
     ents
@@ -1108,16 +1156,20 @@ fn spawn_lot(commands: &mut Commands, a: &CityAssets, c: IVec2, idx: u8) -> Vec<
                 Collider::cuboid(2.65, 0.55, 4.8),
                 Transform::from_xyz(x_front - 1.3, 0.275, 0.0),
             ));
-            for k in 0..2 {
-                let x0 = x_front - 2.6 - 0.45 * (k + 1) as f32;
-                let x1 = x_front - 2.55;
-                let top = 0.55 - 0.18 * (k + 1) as f32;
-                let zk = 1.2 + 0.06 * k as f32;
-                p.spawn((
-                    Collider::cuboid(x1 - x0, top, 2.0 * zk),
-                    Transform::from_xyz((x0 + x1) * 0.5, top * 0.5, 0.0),
-                ));
-            }
+            let run = 1.35;
+            let rise: f32 = 0.55;
+            let slope = rise.atan2(run);
+            let ramp_len = (run * run + rise * rise).sqrt();
+            let thick = 0.3;
+            p.spawn((
+                Collider::cuboid(ramp_len, thick, 2.6),
+                Transform::from_xyz(
+                    x_front - 2.6 - run * 0.5 + slope.sin() * thick * 0.5,
+                    rise * 0.5 - slope.cos() * thick * 0.5,
+                    0.0,
+                )
+                .with_rotation(Quat::from_rotation_z(slope)),
+            ));
             if let Some(zc) = v.dims.bay_z {
                 p.spawn((
                     Collider::cuboid(1.0, houses::FLOOR_H, 2.5),
@@ -1126,15 +1178,28 @@ fn spawn_lot(commands: &mut Commands, a: &CityAssets, c: IVec2, idx: u8) -> Vec<
             }
 
             p.spawn((
+                Mesh3d(v.detail.clone()),
+                MeshMaterial3d(a.vertex_mat.clone()),
+                Transform::default(),
+                NotShadowCaster,
+                Visibility::Hidden,
+                DistHide { dist: DETAIL_DIST },
+            ));
+
+            p.spawn((
                 Mesh3d(a.unit_cube.clone()),
                 MeshMaterial3d(a.path_mat.clone()),
                 Transform::from_xyz(path_cx, 0.03, 0.0).with_scale(Vec3::new(path_len, 0.06, 1.8)),
+                NotShadowCaster,
+                DistHide { dist: PROP_CULL },
             ));
 
             p.spawn((
                 Mesh3d(a.mailbox.clone()),
                 MeshMaterial3d(a.vertex_mat.clone()),
                 Transform::from_xyz(front_edge + 0.9, 0.0, 2.6),
+                NotShadowCaster,
+                DistHide { dist: PROP_CULL },
             ));
             p.spawn((
                 Collider::cuboid(0.7, 1.4, 0.5),
@@ -1189,6 +1254,7 @@ fn spawn_lot(commands: &mut Commands, a: &CityAssets, c: IVec2, idx: u8) -> Vec<
                     Mesh3d(a.ghost.clone()),
                     MeshMaterial3d(a.vertex_mat.clone()),
                     Transform::from_translation(pos).with_rotation(Quat::from_rotation_y(gyaw)),
+                    DistHide { dist: PROP_CULL },
                 ));
             }
 
@@ -1199,6 +1265,8 @@ fn spawn_lot(commands: &mut Commands, a: &CityAssets, c: IVec2, idx: u8) -> Vec<
                     Transform::from_translation(*pos)
                         .with_rotation(Quat::from_rotation_y(*lyaw))
                         .with_scale(Vec3::splat(*ls)),
+                    NotShadowCaster,
+                    DistHide { dist: PROP_CULL },
                 ));
             }
         })

@@ -267,7 +267,21 @@ impl MeshBuilder {
                 }
             })
             .collect();
-        let uvs = vec![[0.0_f32; 2]; n];
+        let uvs: Vec<[f32; 2]> = self
+            .pos
+            .iter()
+            .zip(normals.iter())
+            .map(|(p, nr)| {
+                let (ax, ay, az) = (nr[0].abs(), nr[1].abs(), nr[2].abs());
+                if ay >= ax && ay >= az {
+                    [p[0] * 0.5, p[2] * 0.5]
+                } else if ax >= az {
+                    [p[2] * 0.5, p[1] * 0.5]
+                } else {
+                    [p[0] * 0.5, p[1] * 0.5]
+                }
+            })
+            .collect();
 
         Mesh::new(
             PrimitiveTopology::TriangleList,

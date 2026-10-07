@@ -4,6 +4,7 @@ mod ground;
 mod houses;
 mod mesh;
 mod props;
+mod texture;
 mod util;
 
 use std::collections::{HashMap, HashSet, VecDeque};
@@ -11,11 +12,17 @@ use std::f32::consts::{PI, TAU};
 
 use avian3d::prelude::*;
 use bevy::{
-    core_pipeline::Skybox,
+    core_pipeline::{
+        Skybox,
+        bloom::Bloom,
+        smaa::{Smaa, SmaaPreset},
+        tonemapping::Tonemapping,
+    },
     input::mouse::AccumulatedMouseMotion,
     pbr::{
         CascadeShadowConfigBuilder, DistanceFog, FogFalloff, FogVolume, NotShadowCaster,
-        VolumetricFog, VolumetricLight,
+        ScreenSpaceAmbientOcclusion, ScreenSpaceAmbientOcclusionQualityLevel, VolumetricFog,
+        VolumetricLight,
     },
     prelude::*,
     render::{
@@ -23,11 +30,12 @@ use bevy::{
         render_resource::{
             Extent3d, TextureDimension, TextureFormat, TextureViewDescriptor, TextureViewDimension,
         },
+        view::{ColorGrading, ColorGradingGlobal, ColorGradingSection},
     },
     window::{CursorGrabMode, CursorOptions, PrimaryWindow},
 };
 
-use houses::{build_house, Dims};
+use houses::{Dims, build_house};
 use props::*;
 use util::*;
 
@@ -73,7 +81,7 @@ const MOON_DIR: Vec3 = Vec3::new(-0.5, 0.38, -0.75);
 const MOUSE_SENS: f32 = 0.0022;
 const WALK_SPEED: f32 = 3.2;
 const RUN_SPEED: f32 = 6.0;
-const FLASHLIGHT_BASE: f32 = 450_000.0;
+const FLASHLIGHT_BASE: f32 = 300_000.0;
 const MOON_LUX: f32 = 800.0;
 const MOON_SHADOWS: bool = true;
 const MOON_RADIUS_DEG: f32 = 3.0;
@@ -81,7 +89,9 @@ const AMBIENT_LEVEL: f32 = 45.0;
 const LAMP_LUMENS: f32 = 300_000.0;
 const LAMP_LIT_CHANCE: f32 = 0.6;
 const WINDOW_LIT_CHANCE: f32 = 0.08;
-const FLASHLIGHT_SHADOWS: bool = false;
+const FLASHLIGHT_SHADOWS: bool = true;
+const FLASHLIGHT_BEAM: bool = false;
+const SSAO_ENABLED: bool = false;
 
 const LEAF_PALETTES: [([f32; 3], [f32; 3]); 4] = [
     ([0.50, 0.17, 0.03], [0.88, 0.46, 0.08]),
@@ -214,10 +224,17 @@ fn lod_mesh(meshes: &mut Assets<Mesh>, near: Mesh, far: Mesh) -> LodMesh {
     }
 }
 
-fn build_assets(meshes: &mut Assets<Mesh>, materials: &mut Assets<StandardMaterial>) -> CityAssets {
+fn build_assets(
+    meshes: &mut Assets<Mesh>,
+    materials: &mut Assets<StandardMaterial>,
+    images: &mut Assets<Image>,
+) -> CityAssets {
+    let (detail_albedo, detail_normal) = texture::make_detail_textures();
     let vertex_mat = materials.add(StandardMaterial {
         base_color: Color::WHITE,
-        perceptual_roughness: 0.92,
+        base_color_texture: Some(images.add(detail_albedo)),
+        normal_map_texture: Some(images.add(detail_normal)),
+        perceptual_roughness: 0.9,
         ..default()
     });
     let path_mat = materials.add(StandardMaterial {
@@ -429,6 +446,7 @@ fn setup_world(
     mut commands: Commands,
     mut meshes: ResMut<Assets<Mesh>>,
     mut materials: ResMut<Assets<StandardMaterial>>,
+    mut images: ResMut<Assets<Image>>,
     mut rng: ResMut<GameRng>,
 ) {
     let mut moon = commands.spawn((
@@ -458,7 +476,7 @@ fn setup_world(
         Transform::from_xyz(0.0, -0.5, 0.0),
     ));
 
-    let assets = build_assets(&mut meshes, &mut materials);
+    let assets = build_assets(&mut meshes, &mut materials, &mut images);
     commands.insert_resource(assets);
 
     let leaf_mats: Vec<Handle<StandardMaterial>> = LEAF_PALETTES
@@ -542,7 +560,7 @@ fn stream_chunks(
             .pending
             .iter()
             .enumerate()
-            .min_by(|a, b| dist_to_chunk(p, a.1 .0).total_cmp(&dist_to_chunk(p, b.1 .0)))
+            .min_by(|a, b| dist_to_chunk(p, a.1.0).total_cmp(&dist_to_chunk(p, b.1.0)))
             .map(|(i, _)| i)
         else {
             break;
@@ -1451,11 +1469,27 @@ fn setup_player(mut commands: Commands, mut images: ResMut<Assets<Image>>) {
                 Visibility::default(),
             ))
             .with_children(|h| {
-                h.spawn((
+                let mut cam = h.spawn((
                     PlayerCamera,
                     Camera3d::default(),
                     Camera {
+                        hdr: true,
                         clear_color: ClearColorConfig::Custom(HAZE_COLOR),
+                        ..default()
+                    },
+                    Tonemapping::TonyMcMapface,
+                    Bloom {
+                        intensity: 0.12,
+                        ..Bloom::NATURAL
+                    },
+                    Smaa {
+                        preset: SmaaPreset::High,
+                    },
+                    ColorGrading {
+                        global: ColorGradingGlobal {
+                            exposure: 0.4,
+                            ..default()
+                        },
                         ..default()
                     },
                     Msaa::Off,
@@ -1483,9 +1517,15 @@ fn setup_player(mut commands: Commands, mut images: ResMut<Assets<Image>>) {
                         brightness: 1000.0,
                         ..default()
                     },
-                ))
-                .with_children(|c| {
-                    c.spawn((
+                ));
+                if SSAO_ENABLED {
+                    cam.insert(ScreenSpaceAmbientOcclusion {
+                        quality_level: ScreenSpaceAmbientOcclusionQualityLevel::Medium,
+                        ..default()
+                    });
+                }
+                cam.with_children(|c| {
+                    let mut flash = c.spawn((
                         Flashlight,
                         SpotLight {
                             color: Color::srgb(1.0, 0.92, 0.75),
@@ -1493,18 +1533,62 @@ fn setup_player(mut commands: Commands, mut images: ResMut<Assets<Image>>) {
                             range: 14.0,
                             radius: 0.04,
                             shadows_enabled: FLASHLIGHT_SHADOWS,
-                            inner_angle: 0.12,
-                            outer_angle: 0.55,
+                            inner_angle: 0.3,
+                            outer_angle: 0.7,
                             ..default()
                         },
                         Transform::from_xyz(0.2, -0.15, 0.0),
                     ));
+                    if FLASHLIGHT_SHADOWS && FLASHLIGHT_BEAM {
+                        flash.insert(VolumetricLight);
+                    }
                 });
             });
         });
 }
 
-fn setup_hud(mut commands: Commands) {
+fn make_vignette_image() -> Image {
+    const SIZE: u32 = 256;
+    let mut data = Vec::with_capacity((SIZE * SIZE * 4) as usize);
+    for py in 0..SIZE {
+        for px in 0..SIZE {
+            let u = (px as f32 + 0.5) / SIZE as f32 * 2.0 - 1.0;
+            let v = (py as f32 + 0.5) / SIZE as f32 * 2.0 - 1.0;
+            let r = (u * u + v * v).sqrt();
+            let t = ((r - 0.6) / 0.8).clamp(0.0, 1.0);
+            let a = t * t * (3.0 - 2.0 * t);
+            data.extend_from_slice(&[0, 0, 0, (a * 0.5 * 255.0) as u8]);
+        }
+    }
+    Image::new(
+        Extent3d {
+            width: SIZE,
+            height: SIZE,
+            depth_or_array_layers: 1,
+        },
+        TextureDimension::D2,
+        data,
+        TextureFormat::Rgba8UnormSrgb,
+        RenderAssetUsages::RENDER_WORLD,
+    )
+}
+
+fn setup_hud(mut commands: Commands, mut images: ResMut<Assets<Image>>) {
+    commands.spawn((
+        Node {
+            position_type: PositionType::Absolute,
+            left: Val::Px(0.0),
+            top: Val::Px(0.0),
+            width: Val::Percent(100.0),
+            height: Val::Percent(100.0),
+            ..default()
+        },
+        ImageNode {
+            image: images.add(make_vignette_image()),
+            ..default()
+        },
+        ZIndex(-1),
+    ));
     commands.spawn((
         Text::new("WASD move | Shift run | F flashlight | Esc release mouse | Click to capture"),
         TextFont {

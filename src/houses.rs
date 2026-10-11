@@ -1,7 +1,7 @@
 use bevy::prelude::*;
 
 use crate::mesh::MeshBuilder;
-use crate::util::{GameRng, Rgba, lin, scale_col};
+use crate::util::{lin, scale_col, GameRng, Rgba};
 
 pub const FLOOR_H: f32 = 3.0;
 pub const BASE_H: f32 = 0.5;
@@ -231,16 +231,20 @@ fn window(
     }
 }
 
-fn door(b: &mut MeshBuilder, g: &mut MeshBuilder, x: f32, s: &Style, detail: bool) {
+fn door(b: &mut MeshBuilder, g: &mut MeshBuilder, x: f32, s: &Style, detail: bool, open: bool) {
     let n = -Vec3::X;
     let t = Vec3::Z;
     let c = Vec3::new(x, BASE_H + 1.15, 0.0);
     if !detail {
-        b.obox(c + n * 0.04, t, n, Vec3::new(0.65, 1.15, 0.05), s.door);
+        if !open {
+            b.obox(c + n * 0.04, t, n, Vec3::new(0.65, 1.15, 0.05), s.door);
+        }
         return;
     }
     let gold = lin(0.75, 0.6, 0.2);
-    b.obox(c + n * 0.03, t, n, Vec3::new(0.6, 1.1, 0.05), s.door);
+    if !open {
+        b.obox(c + n * 0.03, t, n, Vec3::new(0.6, 1.1, 0.05), s.door);
+    }
     b.obox(
         c + Vec3::Y * 1.2 + n * 0.06,
         t,
@@ -256,6 +260,9 @@ fn door(b: &mut MeshBuilder, g: &mut MeshBuilder, x: f32, s: &Style, detail: boo
             Vec3::new(0.11, 1.15, 0.08),
             s.trim,
         );
+    }
+    if open {
+        return;
     }
     for (dy, h) in [(-0.5_f32, 0.28_f32), (0.4, 0.28)] {
         for sg in [-1.0_f32, 1.0] {
@@ -394,7 +401,168 @@ fn roof_side(
 }
 
 pub fn build_house(seed: u64, detail: bool) -> (HouseMesh, Dims) {
-    let s = style_from(seed);
+    let (m, s) = build_core(seed, detail, false);
+    (m, s.dims)
+}
+
+pub const WALL_T: f32 = 0.3;
+pub const DOOR_HALF: f32 = 0.6;
+pub const DOOR_TOP: f32 = BASE_H + 2.3;
+pub const FLOOR_TOP: f32 = 0.55;
+pub const WIN_HW: f32 = 0.73;
+pub const HOME_W: f32 = 13.0;
+pub const HOME_D: f32 = 10.8;
+
+pub type Column = (f32, f32, Vec<(f32, f32)>);
+
+pub struct HomeBuild {
+    pub body: Mesh,
+    pub glass: Mesh,
+    pub door: Mesh,
+    pub dims: Dims,
+}
+
+fn win_ranges() -> Vec<(f32, f32)> {
+    (0..2)
+        .map(|f| {
+            let c = BASE_H + 1.45 + f as f32 * FLOOR_H;
+            (c - 0.8, c + 0.8)
+        })
+        .collect()
+}
+
+pub fn front_columns(hz: f32) -> Vec<Column> {
+    vec![
+        (-hz * 0.6, WIN_HW, win_ranges()),
+        (0.0, DOOR_HALF, vec![(BASE_H, DOOR_TOP)]),
+        (hz * 0.6, WIN_HW, win_ranges()),
+    ]
+}
+
+pub fn back_columns(hz: f32) -> Vec<Column> {
+    vec![
+        (-hz * 0.5, WIN_HW, win_ranges()),
+        (hz * 0.5, WIN_HW, win_ranges()),
+    ]
+}
+
+pub fn side_columns() -> Vec<Column> {
+    vec![(0.0, WIN_HW, win_ranges())]
+}
+
+#[allow(clippy::too_many_arguments)]
+pub fn holed_wall(
+    b: &mut MeshBuilder,
+    along_x: bool,
+    f0: f32,
+    f1: f32,
+    u0: f32,
+    u1: f32,
+    cols: &[Column],
+    y0: f32,
+    y1: f32,
+    col: Rgba,
+) {
+    let mut cub = |ua: f32, ub: f32, ya: f32, yb: f32| {
+        if ub - ua < 0.001 || yb - ya < 0.001 {
+            return;
+        }
+        if along_x {
+            b.cuboid(Vec3::new(ua, ya, f0), Vec3::new(ub, yb, f1), col);
+        } else {
+            b.cuboid(Vec3::new(f0, ya, ua), Vec3::new(f1, yb, ub), col);
+        }
+    };
+    let mut sorted: Vec<&Column> = cols.iter().collect();
+    sorted.sort_by(|a, b| a.0.total_cmp(&b.0));
+    let mut cur = u0;
+    for (uc, hw, ranges) in sorted {
+        cub(cur, uc - hw, y0, y1);
+        let mut cy = y0;
+        for (ra, rb) in ranges {
+            cub(uc - hw, uc + hw, cy, *ra);
+            cy = cy.max(*rb);
+        }
+        cub(uc - hw, uc + hw, cy, y1);
+        cur = uc + hw;
+    }
+    cub(cur, u1, y0, y1);
+}
+
+fn home_shell(b: &mut MeshBuilder, s: &Style, hx: f32, hz: f32) {
+    let h = s.dims.h;
+    let t = WALL_T;
+    holed_wall(
+        b,
+        false,
+        -hx,
+        -hx + t,
+        -hz,
+        hz,
+        &front_columns(hz),
+        BASE_H,
+        h,
+        s.wall,
+    );
+    holed_wall(
+        b,
+        false,
+        hx - t,
+        hx,
+        -hz,
+        hz,
+        &back_columns(hz),
+        BASE_H,
+        h,
+        s.wall,
+    );
+    for (f0, f1) in [(-hz, -hz + t), (hz - t, hz)] {
+        holed_wall(
+            b,
+            true,
+            f0,
+            f1,
+            -hx + t,
+            hx - t,
+            &side_columns(),
+            BASE_H,
+            h,
+            s.wall,
+        );
+    }
+    b.cuboid(Vec3::new(-hx, h - 0.1, -hz), Vec3::new(hx, h, hz), s.wall);
+}
+
+pub fn build_home(seed: u64) -> HomeBuild {
+    let (m, s) = build_core(seed, true, true);
+    let hx = s.dims.d * 0.5;
+    let mut db = MeshBuilder::default();
+    let mut gdump = MeshBuilder::default();
+    door(&mut db, &mut gdump, -hx, &s, false, false);
+    db.cuboid(
+        Vec3::new(-hx, BASE_H, -DOOR_HALF - 0.02),
+        Vec3::new(-hx + 0.14, DOOR_TOP, DOOR_HALF + 0.02),
+        s.door,
+    );
+    HomeBuild {
+        body: m.body,
+        glass: m.glass,
+        door: db.build(),
+        dims: s.dims,
+    }
+}
+
+fn build_core(seed: u64, detail: bool, home: bool) -> (HouseMesh, Style) {
+    let mut s = style_from(seed);
+    if home {
+        s.floors = 2;
+        s.bay = None;
+        s.chimney = true;
+        s.dims.bay_z = None;
+        s.dims.w = HOME_W;
+        s.dims.d = HOME_D;
+        s.dims.h = 2.0 * FLOOR_H;
+    }
     let Dims { w, d, h, rh, .. } = s.dims;
     let mut jr = GameRng::seeded(seed ^ 0xA5A5_5A5A);
     let hx = d * 0.5;
@@ -412,7 +580,11 @@ pub fn build_house(seed: u64, detail: bool) -> (HouseMesh, Dims) {
         Vec3::new(hx + 0.08, BASE_H + 0.05, hz + 0.08),
         s.stone,
     );
-    b.cuboid(Vec3::new(-hx, BASE_H, -hz), Vec3::new(hx, h, hz), s.wall);
+    if home {
+        home_shell(&mut b, &s, hx, hz);
+    } else {
+        b.cuboid(Vec3::new(-hx, BASE_H, -hz), Vec3::new(hx, h, hz), s.wall);
+    }
     b.cuboid(Vec3::new(xa, h - 0.15, za), Vec3::new(xb, h, zb), s.wood);
 
     let rows = if detail { 7 } else { 1 };
@@ -664,7 +836,7 @@ pub fn build_house(seed: u64, detail: bool) -> (HouseMesh, Dims) {
     }
 
     porch(&mut b, hx, &s, detail);
-    door(&mut b, &mut g, -hx, &s, detail);
+    door(&mut b, &mut g, -hx, &s, detail, home);
 
     if s.chimney {
         let cx = hx * 0.45;
@@ -713,6 +885,6 @@ pub fn build_house(seed: u64, detail: bool) -> (HouseMesh, Dims) {
             body: b.build(),
             glass: g.build(),
         },
-        s.dims,
+        s,
     )
 }

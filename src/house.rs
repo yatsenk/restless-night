@@ -1,360 +1,367 @@
-use std::f32::consts::{PI, TAU};
-
 use bevy::prelude::*;
 
-use crate::builder::{Axis, Builder, Mat, Opening, WALL_T};
-use crate::collision::Solid;
+use crate::builder::{Axis, Builder, Opening, op};
+use crate::palette::M;
 
-const STORY: f32 = 3.0;
-const SLAB: f32 = 0.2;
-const WALL_H: f32 = STORY - SLAB;
-const WIDTH: f32 = 14.0;
-const DEPTH: f32 = 10.0;
+pub const UPPER: f32 = 3.0;
+pub const H: f32 = 2.8;
 
-#[derive(Resource)]
-pub struct Solids(pub Vec<Solid>);
+const STAIR_X0: f32 = 5.4;
+const STAIR_STEPS: usize = 16;
+const STAIR_TREAD: f32 = 0.22;
+const STAIR_RISE: f32 = 3.0 / STAIR_STEPS as f32;
+const STAIR_Z: (f32, f32) = (8.5, 9.85);
 
-pub struct HousePlugin;
+const GROUND_FRONT: [Opening; 3] = [
+    op(0.9, 2.5, 0.85, 2.1),
+    op(4.5, 5.5, 0.0, 2.2),
+    op(8.0, 10.4, 0.95, 2.1),
+];
+const GROUND_BACK: [Opening; 3] = [
+    op(1.5, 3.3, 0.85, 2.1),
+    op(6.0, 7.2, 1.2, 2.3),
+    op(10.0, 11.0, 1.5, 2.1),
+];
+const GROUND_LEFT: [Opening; 2] = [op(1.5, 3.9, 0.85, 2.1), op(7.4, 9.0, 0.85, 2.1)];
+const GROUND_RIGHT: [Opening; 2] = [op(1.2, 2.8, 1.1, 2.1), op(3.6, 5.0, 1.1, 2.1)];
 
-impl Plugin for HousePlugin {
-    fn build(&self, app: &mut App) {
-        app.add_systems(Startup, build_world);
-    }
-}
+const UPPER_FRONT: [Opening; 3] = [
+    op(1.0, 2.6, 0.85, 2.1),
+    op(3.4, 5.0, 0.85, 2.1),
+    op(7.4, 9.0, 0.85, 2.1),
+];
+const UPPER_BACK: [Opening; 3] = [
+    op(1.5, 3.3, 0.85, 2.1),
+    op(6.3, 7.5, 1.0, 2.2),
+    op(10.0, 11.0, 1.6, 2.2),
+];
+const UPPER_LEFT: [Opening; 1] = [op(4.0, 5.2, 0.85, 2.1)];
+const UPPER_RIGHT: [Opening; 1] = [op(1.8, 3.6, 0.85, 2.1)];
 
-fn build_world(
-    mut commands: Commands,
-    mut meshes: ResMut<Assets<Mesh>>,
-    mut materials: ResMut<Assets<StandardMaterial>>,
-) {
-    let mut b = Builder::new(&mut commands, &mut meshes, &mut materials);
-    outdoors(&mut b);
-    ground_slab(&mut b);
-    upper_slab(&mut b);
-    for level in 0..2 {
-        storey(&mut b, level);
-    }
-    stairs(&mut b);
-    roof(&mut b);
-    furniture(&mut b);
-    let solids = b.finish();
-    commands.insert_resource(Solids(solids));
+pub fn build_shell(b: &mut Builder) {
+    ground_slab(b);
+    upper_slab(b);
+    roof(b);
+    band(b);
+    exterior(
+        b,
+        0.0,
+        &GROUND_FRONT,
+        &GROUND_BACK,
+        &GROUND_LEFT,
+        &GROUND_RIGHT,
+    );
+    exterior(
+        b,
+        UPPER,
+        &UPPER_FRONT,
+        &UPPER_BACK,
+        &UPPER_LEFT,
+        &UPPER_RIGHT,
+    );
+    interior(b, 0.0, true);
+    interior(b, UPPER, false);
+    stairs(b);
+    porch(b);
 }
 
 fn ground_slab(b: &mut Builder) {
-    b.block(
-        Vec3::new(-0.1, -SLAB, -0.1),
-        Vec3::new(WIDTH + 0.1, 0.0, DEPTH + 0.1),
-        Mat::Wood,
-    );
+    b.bx((-0.15, 12.15), (-0.35, -0.03), (-0.15, 10.15), M::Concrete);
+    b.bx((-0.15, 6.5), (-0.03, 0.0), (-0.15, 6.0), M::Floor);
+    b.bx((6.5, 12.15), (-0.03, 0.0), (-0.15, 6.0), M::Tile);
+    b.bx((-0.15, 4.5), (-0.03, 0.0), (6.0, 10.15), M::Floor);
+    b.bx((4.5, 9.0), (-0.03, 0.0), (6.0, 10.15), M::Floor);
+    b.bx((9.0, 12.15), (-0.03, 0.0), (6.0, 10.15), M::Tile);
 }
 
 fn upper_slab(b: &mut Builder) {
-    let rects: [([f32; 2], [f32; 2]); 4] = [
-        ([-0.1, WIDTH + 0.1], [1.4, DEPTH + 0.1]),
-        ([-0.1, 1.0], [-0.1, 1.4]),
-        ([5.2, WIDTH + 0.1], [-0.1, 1.4]),
-        ([1.0, 5.2], [-0.1, 0.1]),
-    ];
-    for (x, z) in rects {
-        b.visual(
-            Vec3::new(x[0], STORY - SLAB, z[0]),
-            Vec3::new(x[1], STORY - SLAB * 0.5, z[1]),
-            Mat::Ceiling,
-        );
-        b.visual(
-            Vec3::new(x[0], STORY - SLAB * 0.5, z[0]),
-            Vec3::new(x[1], STORY, z[1]),
-            Mat::Wood,
-        );
-        b.solid_only(
-            Vec3::new(x[0], STORY - SLAB, z[0]),
-            Vec3::new(x[1], STORY, z[1]),
-        );
-    }
+    let lo = UPPER - 0.2;
+    let mid = UPPER - 0.03;
+    b.bx((-0.15, 12.15), (lo, mid), (-0.15, 8.55), M::Ceiling);
+    b.bx((-0.15, STAIR_X0), (lo, mid), (8.55, 10.15), M::Ceiling);
+    b.bx((8.7, 12.15), (lo, mid), (8.55, 10.15), M::Ceiling);
+    b.bx((STAIR_X0, 8.7), (lo, mid), (9.85, 10.15), M::Ceiling);
+
+    b.bx((-0.15, 6.5), (mid, UPPER), (-0.15, 6.0), M::Floor);
+    b.bx((6.5, 12.15), (mid, UPPER), (-0.15, 6.0), M::Floor);
+    b.bx((-0.15, 4.5), (mid, UPPER), (6.0, 10.15), M::Floor);
+    b.bx((9.0, 12.15), (mid, UPPER), (6.0, 10.15), M::Tile);
+    b.bx((4.5, 9.0), (mid, UPPER), (6.0, 8.55), M::Floor);
+    b.bx((4.5, STAIR_X0), (mid, UPPER), (8.55, 10.15), M::Floor);
+    b.bx((8.7, 9.0), (mid, UPPER), (8.55, 10.15), M::Floor);
+    b.bx((STAIR_X0, 8.7), (mid, UPPER), (9.85, 10.15), M::Floor);
 }
 
-fn storey(b: &mut Builder, level: usize) {
-    let y0 = level as f32 * STORY;
-    let y1 = y0 + WALL_H;
-    let t = WALL_T * 0.5;
-
-    let mut front = vec![
-        Opening::window(1.0, 2.8),
-        Opening::window(3.4, 5.2),
-        Opening::window(9.0, 11.0),
-        Opening::window(11.4, 13.2),
-    ];
-    front.push(if level == 0 {
-        Opening::sealed(6.0, 7.2)
-    } else {
-        Opening::window(6.0, 7.2)
-    });
-    b.wall(Axis::X, DEPTH, -t, WIDTH + t, y0, y1, &front, Mat::Plaster);
-
-    let mut back = vec![Opening::high(7.4, 8.6), Opening::window(11.0, 13.0)];
-    if level == 1 {
-        back.push(Opening::window(2.2, 3.8));
-    }
-    b.wall(Axis::X, 0.0, -t, WIDTH + t, y0, y1, &back, Mat::Plaster);
-
-    let left = [Opening::window(6.0, 8.0), Opening::window(1.8, 3.0)];
-    b.wall(Axis::Z, 0.0, -t, DEPTH + t, y0, y1, &left, Mat::Plaster);
-
-    let right = [Opening::window(6.0, 8.0), Opening::window(1.3, 2.7)];
-    b.wall(Axis::Z, WIDTH, -t, DEPTH + t, y0, y1, &right, Mat::Plaster);
-
-    let middle = [
-        Opening::door(3.0, 4.0),
-        Opening::door(8.4, 9.4),
-        Opening::door(11.4, 12.4),
-    ];
-    b.wall(
-        Axis::X,
-        4.0,
-        0.1,
-        WIDTH - 0.1,
-        y0,
-        y1,
-        &middle,
-        Mat::Plaster,
-    );
-
-    let between = [Opening::door(6.0, 7.4)];
-    b.wall(
-        Axis::Z,
-        8.0,
-        4.0,
-        DEPTH - 0.1,
-        y0,
-        y1,
-        &between,
-        Mat::Plaster,
-    );
-
-    b.wall(Axis::Z, 6.0, 0.1, 4.0, y0, y1, &[], Mat::Plaster);
-    b.wall(Axis::Z, 10.0, 0.1, 4.0, y0, y1, &[], Mat::Plaster);
-}
-
-fn stairs(b: &mut Builder) {
-    for i in 0..15 {
-        let x0 = 1.0 + i as f32 * 0.28;
-        let top = (i + 1) as f32 * 0.2;
-        b.block(
-            Vec3::new(x0, 0.0, 0.1),
-            Vec3::new(x0 + 0.28, top, 1.4),
-            Mat::DarkWood,
-        );
-    }
-    b.block(
-        Vec3::new(1.0, STORY, 1.33),
-        Vec3::new(5.2, STORY + 0.95, 1.4),
-        Mat::Metal,
-    );
-    b.block(
-        Vec3::new(0.98, STORY, 0.1),
-        Vec3::new(1.05, STORY + 0.95, 1.4),
-        Mat::Metal,
-    );
+fn band(b: &mut Builder) {
+    let lo = UPPER - 0.2;
+    b.gx((-0.17, 12.17), (lo, UPPER), (-0.17, -0.15), M::WallExt);
+    b.gx((-0.17, 12.17), (lo, UPPER), (10.15, 10.17), M::WallExt);
+    b.gx((-0.17, -0.15), (lo, UPPER), (-0.15, 10.15), M::WallExt);
+    b.gx((12.15, 12.17), (lo, UPPER), (-0.15, 10.15), M::WallExt);
 }
 
 fn roof(b: &mut Builder) {
-    let top = 2.0 * STORY;
-    b.block(
-        Vec3::new(-0.4, top - SLAB, -0.4),
-        Vec3::new(WIDTH + 0.4, top, DEPTH + 0.4),
-        Mat::Ceiling,
+    let top = UPPER + H;
+    b.gx(
+        (-0.15, 12.15),
+        (top, top + 0.08),
+        (-0.15, 10.15),
+        M::Ceiling,
     );
-    b.visual(
-        Vec3::new(-0.4, top, -0.4),
-        Vec3::new(WIDTH + 0.4, top + 0.06, DEPTH + 0.4),
-        Mat::Roof,
+    b.gx(
+        (-0.3, 12.3),
+        (top + 0.08, top + 0.28),
+        (-0.3, 10.3),
+        M::Roof,
     );
-    let rim = [
-        (
-            Vec3::new(-0.4, top + 0.06, DEPTH + 0.2),
-            Vec3::new(WIDTH + 0.4, top + 0.5, DEPTH + 0.4),
-        ),
-        (
-            Vec3::new(-0.4, top + 0.06, -0.4),
-            Vec3::new(WIDTH + 0.4, top + 0.5, -0.2),
-        ),
-        (
-            Vec3::new(-0.4, top + 0.06, -0.2),
-            Vec3::new(-0.2, top + 0.5, DEPTH + 0.2),
-        ),
-        (
-            Vec3::new(WIDTH + 0.2, top + 0.06, -0.2),
-            Vec3::new(WIDTH + 0.4, top + 0.5, DEPTH + 0.2),
-        ),
-    ];
-    for (min, max) in rim {
-        b.visual(min, max, Mat::Roof);
-    }
+    b.gx(
+        (-0.3, 12.3),
+        (top + 0.28, top + 0.75),
+        (-0.3, -0.1),
+        M::Roof,
+    );
+    b.gx(
+        (-0.3, 12.3),
+        (top + 0.28, top + 0.75),
+        (10.1, 10.3),
+        M::Roof,
+    );
+    b.gx(
+        (-0.3, -0.1),
+        (top + 0.28, top + 0.75),
+        (-0.1, 10.1),
+        M::Roof,
+    );
+    b.gx(
+        (12.1, 12.3),
+        (top + 0.28, top + 0.75),
+        (-0.1, 10.1),
+        M::Roof,
+    );
 }
 
-fn furniture(b: &mut Builder) {
-    let g = 0.0;
-    b.item(g, [4.6, 7.0], [4.3, 5.2], 0.45, Mat::Fabric);
-    b.item(g, [4.6, 7.0], [4.3, 4.5], 0.9, Mat::Fabric);
-    b.item(g, [5.0, 6.6], [6.0, 6.9], 0.4, Mat::DarkWood);
-    b.visual(
-        Vec3::new(4.2, 0.0, 5.6),
-        Vec3::new(7.4, 0.012, 7.3),
-        Mat::Rug,
+fn exterior(
+    b: &mut Builder,
+    y0: f32,
+    front: &[Opening],
+    back: &[Opening],
+    left: &[Opening],
+    right: &[Opening],
+) {
+    side(
+        b,
+        Axis::X,
+        (-0.15, -0.05),
+        (-0.05, 0.15),
+        (-0.15, 12.15),
+        (-0.05, 12.05),
+        0.0,
+        0.15,
+        1.0,
+        y0,
+        front,
     );
-    b.item(g, [0.1, 0.5], [4.2, 5.8], 2.0, Mat::DarkWood);
-    b.item(g, [1.2, 2.1], [8.2, 9.1], 0.5, Mat::Fabric);
-
-    b.item(g, [8.4, 13.8], [9.3, 9.9], 0.9, Mat::DarkWood);
-    b.item(g, [10.0, 12.2], [6.3, 7.5], 0.75, Mat::DarkWood);
-    b.item(g, [9.4, 9.8], [6.3, 6.7], 0.45, Mat::DarkWood);
-    b.item(g, [9.4, 9.8], [7.1, 7.5], 0.45, Mat::DarkWood);
-    b.item(g, [12.4, 12.8], [6.3, 6.7], 0.45, Mat::DarkWood);
-    b.item(g, [12.4, 12.8], [7.1, 7.5], 0.45, Mat::DarkWood);
-    b.item(g, [13.1, 13.9], [4.2, 5.0], 1.9, Mat::Metal);
-
-    b.item(g, [0.1, 0.5], [2.4, 3.7], 0.8, Mat::DarkWood);
-
-    b.item(g, [6.1, 8.0], [0.1, 0.85], 0.55, Mat::Ceramic);
-    b.item(g, [9.0, 9.7], [0.1, 0.55], 0.85, Mat::Ceramic);
-    b.item(g, [9.3, 9.8], [1.3, 1.8], 0.45, Mat::Ceramic);
-
-    b.item(g, [13.5, 13.9], [2.8, 3.9], 1.8, Mat::DarkWood);
-    b.item(g, [10.3, 11.1], [0.3, 1.1], 0.6, Mat::DarkWood);
-    b.item(g, [10.3, 10.9], [1.2, 1.8], 0.4, Mat::DarkWood);
-
-    let u = STORY;
-    b.item(u, [0.1, 2.3], [6.7, 8.3], 0.5, Mat::Fabric);
-    b.item(u, [0.1, 0.25], [6.7, 8.3], 1.1, Mat::DarkWood);
-    b.item(u, [0.1, 0.6], [8.4, 8.9], 0.5, Mat::DarkWood);
-    b.item(u, [6.8, 7.9], [4.2, 5.8], 2.1, Mat::DarkWood);
-    b.visual(
-        Vec3::new(2.6, u, 6.2),
-        Vec3::new(5.6, u + 0.012, 8.8),
-        Mat::Rug,
+    side(
+        b,
+        Axis::X,
+        (10.05, 10.15),
+        (9.85, 10.05),
+        (-0.15, 12.15),
+        (-0.05, 12.05),
+        10.0,
+        9.85,
+        -1.0,
+        y0,
+        back,
     );
-
-    b.item(u, [12.4, 13.9], [8.6, 9.9], 0.75, Mat::DarkWood);
-    b.item(u, [12.4, 12.9], [7.8, 8.3], 0.45, Mat::Fabric);
-    b.item(u, [13.5, 13.9], [4.3, 6.0], 2.0, Mat::DarkWood);
-
-    b.item(u, [0.1, 0.5], [2.4, 3.7], 0.8, Mat::DarkWood);
-
-    b.item(u, [9.0, 9.7], [0.1, 0.55], 0.85, Mat::Ceramic);
-    b.item(u, [9.3, 9.8], [1.3, 1.8], 0.45, Mat::Ceramic);
-    b.item(u, [6.1, 7.1], [0.1, 1.1], 0.1, Mat::Ceramic);
-
-    b.item(u, [10.3, 11.1], [0.3, 1.1], 0.6, Mat::DarkWood);
-    b.item(u, [12.6, 13.4], [2.6, 3.4], 0.5, Mat::DarkWood);
+    side(
+        b,
+        Axis::Z,
+        (-0.15, -0.05),
+        (-0.05, 0.15),
+        (-0.05, 10.05),
+        (0.15, 9.85),
+        0.0,
+        0.15,
+        1.0,
+        y0,
+        left,
+    );
+    side(
+        b,
+        Axis::Z,
+        (12.05, 12.15),
+        (11.85, 12.05),
+        (-0.05, 10.05),
+        (0.15, 9.85),
+        12.0,
+        11.85,
+        -1.0,
+        y0,
+        right,
+    );
 }
 
-struct Rng(u32);
-
-impl Rng {
-    fn next(&mut self) -> f32 {
-        self.0 = self.0.wrapping_mul(1664525).wrapping_add(1013904223);
-        (self.0 >> 8) as f32 / 16_777_216.0
-    }
-
-    fn range(&mut self, a: f32, b: f32) -> f32 {
-        a + (b - a) * self.next()
-    }
-}
-
-fn outdoors(b: &mut Builder) {
-    b.block(
-        Vec3::new(-120.0, -1.0, -120.0),
-        Vec3::new(120.0, -0.02, 120.0),
-        Mat::Soil,
-    );
-    b.block(
-        Vec3::new(-120.0, -0.5, 20.0),
-        Vec3::new(120.0, 0.0, 28.0),
-        Mat::Asphalt,
-    );
-    b.block(
-        Vec3::new(-120.0, -0.5, 17.2),
-        Vec3::new(120.0, 0.05, 20.0),
-        Mat::Pavement,
-    );
-    b.block(
-        Vec3::new(-120.0, -0.5, 28.0),
-        Vec3::new(120.0, 0.05, 30.8),
-        Mat::Pavement,
-    );
-    b.block(
-        Vec3::new(5.8, -0.5, DEPTH + 0.1),
-        Vec3::new(7.4, 0.01, 17.2),
-        Mat::Pavement,
-    );
-
-    for x in [12.0, -22.0, 46.0] {
-        b.block(
-            Vec3::new(x - 0.06, 0.0, 18.14),
-            Vec3::new(x + 0.06, 4.8, 18.26),
-            Mat::Metal,
-        );
-        b.visual(
-            Vec3::new(x - 0.4, 4.75, 17.9),
-            Vec3::new(x + 0.4, 4.85, 18.5),
-            Mat::Metal,
-        );
-    }
-
-    let mut rng = Rng(0x5eed_1234);
-
-    let trees = [
-        (-3.0, 14.0),
-        (18.0, 13.0),
-        (-13.0, 3.0),
-        (25.0, -4.0),
-        (5.0, -11.0),
-        (-7.0, 33.0),
-        (30.0, 34.0),
-        (16.0, -16.0),
-        (-20.0, 14.0),
-        (36.0, 12.0),
-    ];
-    for (x, z) in trees {
-        let yaw = rng.range(0.0, TAU);
-        b.oriented(
-            Vec3::new(x, 3.0, z),
-            Vec3::new(0.45, 6.0, 0.45),
-            Quat::from_rotation_y(yaw),
-            Mat::Bark,
-        );
-        for i in 0..5 {
-            let len = 2.8 - i as f32 * 0.35;
-            let tilt = rng.range(0.7, 1.1);
-            let rot = Quat::from_rotation_y(yaw + i as f32 * 1.256 + rng.range(-0.3, 0.3))
-                * Quat::from_rotation_z(-tilt);
-            let origin = Vec3::new(x, 3.2 + i as f32 * 0.65, z);
-            b.oriented(
-                origin + rot * Vec3::new(0.0, len * 0.5, 0.0),
-                Vec3::new(0.14, len, 0.14),
-                rot,
-                Mat::Bark,
-            );
+fn side(
+    b: &mut Builder,
+    axis: Axis,
+    outer_f: (f32, f32),
+    inner_f: (f32, f32),
+    outer_t: (f32, f32),
+    inner_t: (f32, f32),
+    center: f32,
+    face: f32,
+    dir: f32,
+    y0: f32,
+    ops: &[Opening],
+) {
+    b.wall(axis, outer_f, outer_t, y0, H, M::WallExt, false, ops);
+    b.wall(axis, inner_f, inner_t, y0, H, M::WallInt, true, ops);
+    for o in ops {
+        if o.bottom <= 0.0 {
+            front_door(b, axis, center, *o, y0);
+        } else {
+            b.window(axis, center, y0, *o);
+            b.sill(axis, face, dir, y0, *o);
+            if o.bottom < 1.2 {
+                b.curtains(axis, face, dir, y0, *o);
+            }
         }
     }
+}
 
-    for _ in 0..260 {
-        let x = rng.range(-38.0, 52.0);
-        let z = rng.range(-30.0, 48.0);
-        let in_house = (-1.0..15.0).contains(&x) && (-1.0..11.0).contains(&z);
-        let in_street = (17.0..31.0).contains(&z);
-        if in_house || in_street {
-            continue;
-        }
-        let w = rng.range(0.3, 0.7);
-        let d = rng.range(0.2, 0.5);
-        let kind = (rng.next() * 3.0) as u8;
-        b.oriented(
-            Vec3::new(x, -0.012, z),
-            Vec3::new(w, 0.012, d),
-            Quat::from_rotation_y(rng.range(0.0, PI)),
-            Mat::Leaf(kind),
+fn front_door(b: &mut Builder, axis: Axis, c: f32, o: Opening, y0: f32) {
+    if let Axis::X = axis {
+        b.bx((o.a, o.b), (y0, y0 + o.top), (c - 0.02, c + 0.1), M::Door);
+        b.gx(
+            (o.a + 0.1, o.b - 0.1),
+            (y0 + 0.15, y0 + 1.0),
+            (c - 0.04, c - 0.02),
+            M::Trim,
+        );
+        b.gx(
+            (o.a + 0.1, o.b - 0.1),
+            (y0 + 1.15, y0 + 2.05),
+            (c - 0.04, c - 0.02),
+            M::Trim,
+        );
+        b.gx(
+            (o.b - 0.2, o.b - 0.14),
+            (y0 + 1.0, y0 + 1.1),
+            (c + 0.1, c + 0.18),
+            M::Metal,
         );
     }
+    b.door_frame(axis, c, 0.3, y0, o);
+}
+
+fn interior(b: &mut Builder, y0: f32, ground: bool) {
+    let mid_ops = [op(2.4, 3.6, 0.0, 2.1)];
+    let mid: &[Opening] = if ground { &mid_ops } else { &[] };
+    b.wall(
+        Axis::Z,
+        (6.42, 6.58),
+        (0.15, 5.92),
+        y0,
+        H,
+        M::WallInt,
+        true,
+        mid,
+    );
+    for o in mid {
+        b.door_frame(Axis::Z, 6.5, 0.16, y0, *o);
+    }
+
+    let across = [op(5.0, 6.2, 0.0, 2.1), op(7.0, 8.0, 0.0, 2.1)];
+    b.wall(
+        Axis::X,
+        (5.92, 6.08),
+        (0.15, 11.85),
+        y0,
+        H,
+        M::WallInt,
+        true,
+        &across,
+    );
+    for o in across {
+        b.door_frame(Axis::X, 6.0, 0.16, y0, o);
+    }
+
+    let back = [op(6.6, 7.6, 0.0, 2.1)];
+    b.wall(
+        Axis::Z,
+        (4.42, 4.58),
+        (6.08, 9.85),
+        y0,
+        H,
+        M::WallInt,
+        true,
+        &back,
+    );
+    b.wall(
+        Axis::Z,
+        (8.92, 9.08),
+        (6.08, 9.85),
+        y0,
+        H,
+        M::WallInt,
+        true,
+        &back,
+    );
+    for o in back {
+        b.door_frame(Axis::Z, 4.5, 0.16, y0, o);
+        b.door_frame(Axis::Z, 9.0, 0.16, y0, o);
+    }
+}
+
+fn stairs(b: &mut Builder) {
+    for i in 0..STAIR_STEPS {
+        let x0 = STAIR_X0 + i as f32 * STAIR_TREAD;
+        let top = (i + 1) as f32 * STAIR_RISE;
+        b.bx((x0, x0 + STAIR_TREAD), (0.0, top), STAIR_Z, M::WoodLight);
+        b.gx(
+            (x0 + STAIR_TREAD - 0.03, x0 + STAIR_TREAD),
+            (top - STAIR_RISE, top),
+            STAIR_Z,
+            M::WoodDark,
+        );
+    }
+    let x_end = STAIR_X0 + STAIR_STEPS as f32 * STAIR_TREAD;
+    let run = x_end - STAIR_X0;
+    let angle = (3.0f32).atan2(run);
+    let len = (run * run + 9.0).sqrt();
+    b.tilted(
+        Vec3::new((STAIR_X0 + x_end) * 0.5, 0.95 + 1.5, 8.47),
+        Vec3::new(len, 0.06, 0.06),
+        Quat::from_rotation_z(angle),
+        M::WoodDark,
+    );
+    for i in (0..STAIR_STEPS).step_by(2) {
+        let x = STAIR_X0 + i as f32 * STAIR_TREAD + 0.1;
+        let top = (i + 1) as f32 * STAIR_RISE;
+        b.gx((x, x + 0.04), (top, top + 0.95), (8.45, 8.49), M::Trim);
+    }
+    b.railing((STAIR_X0, 8.0), (8.5, 8.55), UPPER);
+    b.railing((STAIR_X0 - 0.05, STAIR_X0), (8.55, 9.85), UPPER);
+}
+
+fn porch(b: &mut Builder) {
+    b.gx((3.6, 6.4), (-0.3, 0.0), (-1.8, -0.15), M::Concrete);
+    b.gx((3.8, 6.2), (-0.3, -0.12), (-2.4, -1.8), M::Concrete);
+    b.gx((3.6, 6.4), (2.62, 2.72), (-1.8, -0.15), M::Trim);
+    b.post(3.75, -1.65, 0.0, 2.62, 0.07, M::Trim, true);
+    b.post(6.25, -1.65, 0.0, 2.62, 0.07, M::Trim, true);
+    let e = b.light(
+        Vec3::new(5.0, 2.4, -0.45),
+        Color::srgb(1.0, 0.7, 0.35),
+        40_000.0,
+        7.0,
+        false,
+    );
+    b.flicker(e, 40_000.0, 1.3);
+    b.gx((4.88, 5.12), (2.38, 2.55), (-0.57, -0.33), M::Bulb);
+    b.ball(Vec3::new(3.95, 0.2, -1.2), 0.2, M::Pumpkin);
+    b.gx((3.92, 3.98), (0.38, 0.48), (-1.23, -1.17), M::Bark);
+    b.ball(Vec3::new(6.0, 0.15, -1.0), 0.15, M::Pumpkin);
+    b.gx((5.97, 6.03), (0.28, 0.35), (-1.03, -0.97), M::Bark);
 }

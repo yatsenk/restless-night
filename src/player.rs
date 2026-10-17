@@ -1,162 +1,227 @@
-use std::f32::consts::PI;
-
 use bevy::{
+    anti_alias::smaa::Smaa,
+    camera::Exposure,
+    core_pipeline::tonemapping::Tonemapping,
     input::mouse::AccumulatedMouseMotion,
+    light::VolumetricFog,
+    post_process::bloom::Bloom,
     prelude::*,
-    window::{CursorGrabMode, CursorOptions, PrimaryWindow},
+    render::view::{ColorGrading, ColorGradingGlobal, ColorGradingSection},
+    window::{CursorGrabMode, CursorOptions},
 };
 
-use crate::atmosphere::distance_fog;
-use crate::collision::step;
-use crate::house::Solids;
+use crate::collision::Body;
+use crate::math::v3;
+use crate::world::HouseRes;
 
-const EYE: f32 = 1.62;
-const WALK: f32 = 2.1;
-const SPRINT: f32 = 3.4;
-const SENSITIVITY: f32 = 0.0022;
-
-#[derive(Component, Default)]
-struct Player {
-    vel_y: f32,
-    pitch: f32,
-    speed: f32,
-    bob: f32,
-    lag: f32,
-}
+pub const EYE_HEIGHT: f32 = 1.62;
+pub const WALK_SPEED: f32 = 2.3;
+pub const RUN_SPEED: f32 = 4.0;
+pub const LOOK_SENSITIVITY: f32 = 0.0022;
+pub const START_EV: f32 = 5.4;
 
 #[derive(Component)]
-struct PlayerCamera;
+pub struct PlayerCamera;
 
-pub struct PlayerPlugin;
+#[derive(Component)]
+pub struct Flashlight;
 
-impl Plugin for PlayerPlugin {
-    fn build(&self, app: &mut App) {
-        app.add_systems(Startup, (spawn_player, lock_cursor))
-            .add_systems(Update, (cursor_toggle, look, movement, camera_feel).chain());
-    }
+#[derive(Resource)]
+pub struct PlayerState {
+    pub body: Body,
+    pub yaw: f32,
+    pub pitch: f32,
+    pub vel: Vec2,
+    pub eye_y: f32,
+    pub bob: f32,
+    pub flashlight: bool,
 }
 
-fn spawn_player(mut commands: Commands) {
+pub fn setup(mut commands: Commands, house: Res<HouseRes>) {
+    let s = house.0.spawn;
+    commands.insert_resource(PlayerState {
+        body: Body::new(v3(s.x, s.y, s.z)),
+        yaw: house.0.spawn_yaw,
+        pitch: 0.0,
+        vel: Vec2::ZERO,
+        eye_y: s.y + EYE_HEIGHT,
+        bob: 0.0,
+        flashlight: true,
+    });
+
     commands
         .spawn((
-            Player::default(),
-            Transform::from_xyz(3.6, 3.0, 7.6).with_rotation(Quat::from_rotation_y(PI)),
-            Visibility::default(),
+            Camera3d::default(),
+            Projection::Perspective(PerspectiveProjection {
+                fov: 72.0_f32.to_radians(),
+                near: 0.05,
+                ..default()
+            }),
+            Transform::from_xyz(s.x, s.y + EYE_HEIGHT, s.z),
+            PlayerCamera,
+            Tonemapping::TonyMcMapface,
+            Bloom {
+                intensity: 0.1,
+                ..default()
+            },
+            Exposure { ev100: START_EV },
+        ))
+        .insert((
+            ColorGrading {
+                global: ColorGradingGlobal {
+                    post_saturation: 0.72,
+                    temperature: -0.06,
+                    ..default()
+                },
+                midtones: ColorGradingSection {
+                    contrast: 1.08,
+                    ..default()
+                },
+                ..default()
+            },
+            DistanceFog {
+                color: Color::srgb(0.028, 0.036, 0.048),
+                falloff: FogFalloff::ExponentialSquared {
+                    density: crate::atmosphere::FOG_DENSITY,
+                },
+                ..default()
+            },
+            VolumetricFog {
+                ambient_intensity: 0.0,
+                step_count: 32,
+                ..default()
+            },
+            Smaa::default(),
+            Msaa::Off,
         ))
         .with_children(|p| {
             p.spawn((
-                PlayerCamera,
-                Camera3d::default(),
-                Projection::Perspective(PerspectiveProjection {
-                    fov: 72f32.to_radians(),
-                    near: 0.05,
-                    far: 80.0,
+                SpotLight {
+                    color: Color::srgb(1.0, 0.93, 0.78),
+                    intensity: 4200.0,
+                    range: 30.0,
+                    inner_angle: 0.13,
+                    outer_angle: 0.42,
+                    shadow_maps_enabled: true,
                     ..default()
-                }),
-                Transform::from_xyz(0.0, EYE, 0.0),
-                distance_fog(),
+                },
+                Transform::default(),
+                Flashlight,
             ));
         });
 }
 
-fn lock_cursor(mut options: Single<&mut CursorOptions, With<PrimaryWindow>>) {
-    options.grab_mode = CursorGrabMode::Locked;
-    options.visible = false;
-}
-
-fn cursor_toggle(
-    mut options: Single<&mut CursorOptions, With<PrimaryWindow>>,
+pub fn cursor_grab(
+    mut cursor: Single<&mut CursorOptions>,
     mouse: Res<ButtonInput<MouseButton>>,
     keys: Res<ButtonInput<KeyCode>>,
 ) {
     if mouse.just_pressed(MouseButton::Left) {
-        options.grab_mode = CursorGrabMode::Locked;
-        options.visible = false;
+        cursor.visible = false;
+        cursor.grab_mode = CursorGrabMode::Locked;
     }
     if keys.just_pressed(KeyCode::Escape) {
-        options.grab_mode = CursorGrabMode::None;
-        options.visible = true;
+        cursor.visible = true;
+        cursor.grab_mode = CursorGrabMode::None;
     }
 }
 
-fn look(
+pub fn look(
+    cursor: Single<&CursorOptions>,
     motion: Res<AccumulatedMouseMotion>,
-    options: Single<&CursorOptions, With<PrimaryWindow>>,
-    mut player: Query<(&mut Transform, &mut Player)>,
+    mut st: ResMut<PlayerState>,
 ) {
-    if options.grab_mode != CursorGrabMode::Locked {
+    if cursor.grab_mode != CursorGrabMode::Locked {
         return;
     }
-    let Ok((mut tf, mut p)) = player.single_mut() else {
-        return;
-    };
-    tf.rotate_y(-motion.delta.x * SENSITIVITY);
-    p.pitch = (p.pitch - motion.delta.y * SENSITIVITY).clamp(-1.45, 1.45);
+    st.yaw -= motion.delta.x * LOOK_SENSITIVITY;
+    st.pitch = (st.pitch - motion.delta.y * LOOK_SENSITIVITY).clamp(-1.45, 1.45);
 }
 
-fn movement(
+pub fn walk(
     time: Res<Time>,
     keys: Res<ButtonInput<KeyCode>>,
-    solids: Option<Res<Solids>>,
-    mut player: Query<(&mut Transform, &mut Player)>,
+    house: Res<HouseRes>,
+    mut st: ResMut<PlayerState>,
 ) {
-    let Some(solids) = solids else {
-        return;
-    };
-    let Ok((mut tf, mut p)) = player.single_mut() else {
-        return;
-    };
     let dt = time.delta_secs().min(0.05);
     if dt <= 0.0 {
         return;
     }
-
-    let mut wish = Vec2::ZERO;
-    if keys.pressed(KeyCode::KeyW) {
-        wish.y += 1.0;
+    let mut input = Vec2::ZERO;
+    if keys.pressed(KeyCode::KeyW) || keys.pressed(KeyCode::ArrowUp) {
+        input.y += 1.0;
     }
-    if keys.pressed(KeyCode::KeyS) {
-        wish.y -= 1.0;
+    if keys.pressed(KeyCode::KeyS) || keys.pressed(KeyCode::ArrowDown) {
+        input.y -= 1.0;
     }
-    if keys.pressed(KeyCode::KeyD) {
-        wish.x += 1.0;
+    if keys.pressed(KeyCode::KeyD) || keys.pressed(KeyCode::ArrowRight) {
+        input.x += 1.0;
     }
-    if keys.pressed(KeyCode::KeyA) {
-        wish.x -= 1.0;
+    if keys.pressed(KeyCode::KeyA) || keys.pressed(KeyCode::ArrowLeft) {
+        input.x -= 1.0;
     }
-    let wish = wish.normalize_or_zero();
-    let speed = if keys.pressed(KeyCode::ShiftLeft) {
-        SPRINT
+    let speed = if keys.pressed(KeyCode::ShiftLeft) || keys.pressed(KeyCode::ShiftRight) {
+        RUN_SPEED
     } else {
-        WALK
+        WALK_SPEED
     };
-
-    let forward = tf.rotation * Vec3::NEG_Z;
-    let right = tf.rotation * Vec3::X;
-    let delta = (forward * wish.y + right * wish.x) * speed * dt;
-
-    let before = tf.translation;
-    let (pos, vel_y, snapped) = step(before, p.vel_y, delta, dt, &solids.0);
-    tf.translation = pos;
-    p.vel_y = vel_y;
-    p.lag -= snapped;
-
-    let moved = Vec2::new(pos.x - before.x, pos.z - before.z).length() / dt;
-    p.speed += (moved - p.speed) * (1.0 - (-10.0 * dt).exp());
+    let forward = Vec2::new(-st.yaw.sin(), -st.yaw.cos());
+    let right = Vec2::new(st.yaw.cos(), -st.yaw.sin());
+    let wish = (forward * input.y + right * input.x).normalize_or_zero() * speed;
+    let k = 1.0 - (-14.0 * dt).exp();
+    st.vel = st.vel.lerp(wish, k);
+    let d = st.vel * dt;
+    house.0.world.step(&mut st.body, d.x, d.y, dt);
+    if st.body.pos.y < -20.0 {
+        let s = house.0.spawn;
+        st.body = Body::new(v3(s.x, s.y, s.z));
+        st.vel = Vec2::ZERO;
+    }
+    let moving = st.vel.length();
+    if st.body.grounded {
+        st.bob += moving * dt * 2.1;
+    }
+    let target = st.body.pos.y + EYE_HEIGHT;
+    let diff = target - st.eye_y;
+    if diff.abs() > 0.7 {
+        st.eye_y = target;
+    } else {
+        st.eye_y += diff * (1.0 - (-20.0 * dt).exp());
+    }
 }
 
-fn camera_feel(
+pub fn apply_camera(st: Res<PlayerState>, mut cam: Single<&mut Transform, With<PlayerCamera>>) {
+    let amp = (st.vel.length() / RUN_SPEED).min(1.0);
+    let bob_y = (st.bob * 2.0).sin() * 0.011 * amp;
+    let bob_x = st.bob.sin() * 0.007 * amp;
+    let rot = Quat::from_euler(EulerRot::YXZ, st.yaw, st.pitch, 0.0);
+    cam.translation = Vec3::new(st.body.pos.x, st.eye_y + bob_y, st.body.pos.z)
+        + rot * Vec3::new(bob_x, 0.0, 0.0);
+    cam.rotation = rot;
+}
+
+pub fn flashlight(
     time: Res<Time>,
-    mut player: Query<&mut Player>,
-    mut camera: Query<&mut Transform, With<PlayerCamera>>,
+    keys: Res<ButtonInput<KeyCode>>,
+    mut st: ResMut<PlayerState>,
+    mut q: Query<(&mut SpotLight, &mut Visibility), With<Flashlight>>,
 ) {
-    let (Ok(mut p), Ok(mut cam)) = (player.single_mut(), camera.single_mut()) else {
-        return;
+    if keys.just_pressed(KeyCode::KeyF) {
+        st.flashlight = !st.flashlight;
+    }
+    let t = time.elapsed_secs();
+    let dip = {
+        let slot = (t * 9.0).floor();
+        let h = ((slot * 12.9898).sin() * 43758.547).fract().abs();
+        if h > 0.985 { 0.35 } else { 1.0 }
     };
-    let dt = time.delta_secs();
-    p.lag *= (-14.0 * dt).exp();
-    p.bob += dt * p.speed * 2.6;
-    let bob = p.bob.sin() * 0.022 * (p.speed / WALK).min(1.6);
-    cam.translation.y = EYE + p.lag + bob;
-    cam.rotation = Quat::from_rotation_x(p.pitch);
+    for (mut l, mut v) in &mut q {
+        l.intensity = 4200.0 * dip;
+        *v = if st.flashlight {
+            Visibility::Inherited
+        } else {
+            Visibility::Hidden
+        };
+    }
 }

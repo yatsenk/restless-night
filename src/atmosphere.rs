@@ -1,114 +1,143 @@
-use bevy::{light::CascadeShadowConfigBuilder, pbr::{DistanceFog, FogFalloff}, prelude::*};
+use bevy::{
+    light::{CascadeShadowConfigBuilder, FogVolume, VolumetricLight},
+    prelude::*,
+};
 
-pub struct AtmospherePlugin;
+use crate::layout::Flicker;
+use crate::player::PlayerCamera;
+use crate::world::{HouseRes, to_vec3};
 
-impl Plugin for AtmospherePlugin {
-    fn build(&self, app: &mut App) {
-        app.insert_resource(ClearColor(fog_color()))
-            .insert_resource(GlobalAmbientLight {
-                color: Color::srgb(0.45, 0.55, 0.85),
-                brightness: 14.0,
-                ..default()
-            })
-            .add_systems(Startup, spawn_lights)
-            .add_systems(Update, flicker);
-    }
-}
-
-pub fn fog_color() -> Color {
-    Color::srgb(0.055, 0.065, 0.085)
-}
-
-pub fn distance_fog() -> DistanceFog {
-    DistanceFog {
-        color: fog_color(),
-        falloff: FogFalloff::ExponentialSquared { density: 0.045 },
-        ..default()
-    }
-}
+pub const MOON_LUX: f32 = 22.0;
+pub const AMBIENT_BRIGHTNESS: f32 = 1.3;
+pub const FOG_DENSITY: f32 = 0.034;
+pub const SHADOWED_ROOM_LIGHTS: usize = 4;
 
 #[derive(Component)]
-struct Flicker {
-    base: f32,
-    seed: f32,
+pub struct RoomLight {
+    pub base: f32,
+    pub flicker: Flicker,
+    pub phase: f32,
 }
 
-struct Lamp {
-    pos: [f32; 3],
-    shadows: bool,
-    flicker: bool,
-}
+pub fn setup(mut commands: Commands, house: Res<HouseRes>) {
+    commands.insert_resource(ClearColor(Color::srgb(0.012, 0.016, 0.024)));
+    commands.insert_resource(GlobalAmbientLight {
+        color: Color::srgb(0.5, 0.6, 0.92),
+        brightness: AMBIENT_BRIGHTNESS,
+        ..default()
+    });
 
-const LAMPS: [Lamp; 10] = [
-    Lamp { pos: [4.0, 2.6, 7.0], shadows: true, flicker: false },
-    Lamp { pos: [11.0, 2.6, 7.0], shadows: true, flicker: false },
-    Lamp { pos: [3.0, 2.6, 2.8], shadows: false, flicker: false },
-    Lamp { pos: [8.0, 2.6, 2.0], shadows: false, flicker: false },
-    Lamp { pos: [12.0, 2.6, 2.0], shadows: false, flicker: false },
-    Lamp { pos: [4.0, 5.6, 7.0], shadows: true, flicker: false },
-    Lamp { pos: [11.0, 5.6, 7.0], shadows: true, flicker: false },
-    Lamp { pos: [3.0, 5.6, 2.8], shadows: true, flicker: true },
-    Lamp { pos: [8.0, 5.6, 2.0], shadows: false, flicker: false },
-    Lamp { pos: [12.0, 5.6, 2.0], shadows: false, flicker: false },
-];
-
-fn spawn_lights(mut commands: Commands) {
     commands.spawn((
         DirectionalLight {
-            color: Color::srgb(0.55, 0.66, 1.0),
-            illuminance: 650.0,
+            color: Color::srgb(0.55, 0.68, 1.0),
+            illuminance: MOON_LUX,
             shadow_maps_enabled: true,
             ..default()
         },
+        VolumetricLight,
+        Transform::default().looking_to(Vec3::new(0.45, -0.55, 0.7), Vec3::Y),
         CascadeShadowConfigBuilder {
             num_cascades: 3,
-            first_cascade_far_bound: 5.0,
-            maximum_distance: 60.0,
+            minimum_distance: 0.1,
+            maximum_distance: 40.0,
+            first_cascade_far_bound: 7.0,
             ..default()
         }
         .build(),
-        Transform::from_xyz(-10.0, 24.0, 40.0).looking_at(Vec3::new(7.0, 0.0, 5.0), Vec3::Y),
     ));
 
-    let base = 70_000.0;
-    for (i, lamp) in LAMPS.iter().enumerate() {
-        let mut e = commands.spawn((
-            PointLight {
-                color: Color::srgb(1.0, 0.78, 0.52),
-                intensity: base,
-                range: 10.0,
-                radius: 0.08,
-                shadow_maps_enabled: lamp.shadows,
-                ..default()
-            },
-            Transform::from_xyz(lamp.pos[0], lamp.pos[1], lamp.pos[2]),
-        ));
-        if lamp.flicker {
-            e.insert(Flicker { base, seed: i as f32 * 1.7 });
-        }
-    }
+    commands.spawn((
+        FogVolume {
+            fog_color: Color::srgb(0.55, 0.64, 0.8),
+            density_factor: 0.03,
+            ..default()
+        },
+        Transform::from_xyz(8.0, 3.3, 6.0).with_scale(Vec3::new(60.0, 16.0, 60.0)),
+    ));
 
-    for x in [12.0, -22.0, 46.0] {
+    for (i, l) in house.0.lights.iter().enumerate() {
         commands.spawn((
             PointLight {
-                color: Color::srgb(1.0, 0.62, 0.28),
-                intensity: 90_000.0,
-                range: 16.0,
-                radius: 0.1,
+                color: Color::srgb(l.color[0], l.color[1], l.color[2]),
+                intensity: l.lumens,
+                range: l.range,
                 shadow_maps_enabled: false,
+                radius: 0.08,
                 ..default()
             },
-            Transform::from_xyz(x, 4.5, 18.2),
+            Transform::from_translation(to_vec3(l.pos)),
+            RoomLight {
+                base: l.lumens,
+                flicker: l.flicker,
+                phase: i as f32 * 7.31,
+            },
         ));
     }
 }
 
-fn flicker(time: Res<Time>, mut lights: Query<(&Flicker, &mut PointLight)>) {
+fn hash(x: f32) -> f32 {
+    ((x * 12.9898).sin() * 43758.547).fract().abs()
+}
+
+fn pattern(f: Flicker, t: f32, phase: f32) -> f32 {
+    match f {
+        Flicker::Steady => 1.0,
+        Flicker::Breathe => {
+            1.0 + 0.07 * (t * 0.9 + phase).sin() + 0.035 * (t * 2.7 + phase * 1.7).sin()
+        }
+        Flicker::Sputter => {
+            let slot = (t * 13.0 + phase).floor();
+            let blip = if hash(slot) > 0.9 { 0.25 } else { 1.0 };
+            let outage_slot = (t * 0.28 + phase).floor();
+            let outage_phase = (t * 0.28 + phase).fract();
+            let outage = if hash(outage_slot * 3.7) > 0.86 && outage_phase < 0.16 {
+                0.04
+            } else {
+                1.0
+            };
+            (0.92 + 0.08 * (t * 3.1 + phase).sin()) * blip * outage
+        }
+        Flicker::Fluorescent => {
+            let cyc = (t * 0.45 + phase).floor();
+            let in_cycle = (t * 0.45 + phase).fract();
+            if hash(cyc * 1.9) > 0.7 && in_cycle < 0.22 {
+                if hash((t * 34.0).floor() + phase) > 0.45 {
+                    1.0
+                } else {
+                    0.12
+                }
+            } else {
+                0.94 + 0.04 * (t * 100.0).sin()
+            }
+        }
+    }
+}
+
+pub fn flicker(time: Res<Time>, mut q: Query<(&RoomLight, &mut PointLight)>) {
     let t = time.elapsed_secs();
-    for (f, mut light) in &mut lights {
-        let slow = (t * 1.3 + f.seed).sin();
-        let fast = (t * 37.0 + f.seed * 3.0).sin() * (t * 11.0 + f.seed).sin();
-        let dip = if slow > 0.82 && fast > 0.2 { 0.25 } else { 1.0 };
-        light.intensity = f.base * dip * (0.96 + 0.04 * fast);
+    for (r, mut l) in &mut q {
+        l.intensity = r.base * pattern(r.flicker, t, r.phase);
+    }
+}
+
+pub fn shadow_budget(
+    cam: Single<&Transform, With<PlayerCamera>>,
+    mut q: Query<(Entity, &GlobalTransform, &mut PointLight), With<RoomLight>>,
+) {
+    let p = cam.translation;
+    let mut order: Vec<(f32, Entity)> = q
+        .iter()
+        .map(|(e, g, _)| (g.translation().distance_squared(p), e))
+        .collect();
+    order.sort_by(|a, b| a.0.partial_cmp(&b.0).unwrap());
+    for (e, _, mut l) in &mut q {
+        let rank = order
+            .iter()
+            .position(|(_, o)| *o == e)
+            .unwrap_or(usize::MAX);
+        let want = rank < SHADOWED_ROOM_LIGHTS;
+        if l.shadow_maps_enabled != want {
+            l.shadow_maps_enabled = want;
+        }
     }
 }

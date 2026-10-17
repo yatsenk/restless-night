@@ -4,10 +4,7 @@ version = "0.1.0"
 edition = "2024"
 
 [dependencies]
-bevy = { version = "0.20.0", default-features = false, features = ["3d"] }
-
-[features]
-dev = ["bevy/dynamic_linking"]
+bevy = { version = "0.20.0", features = ["ui", "jpeg"] }
 
 [profile.dev]
 opt-level = 1

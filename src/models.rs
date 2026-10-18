@@ -1,5 +1,5 @@
 use crate::collision::Solid;
-use crate::math::{v3, V3};
+use crate::math::{V3, v3};
 
 #[derive(Clone, Debug)]
 pub struct Placement {
@@ -85,14 +85,13 @@ pub fn placements() -> Vec<Placement> {
             file: "models/modern__sofa.glb",
             scale: 1.2,
             anchor: v3(0.0, -0.301, 0.0),
-            pos: v3(3.2, 0.0, 5.62),
-            quarters: 2,
+            pos: v3(10.08, 0.0, 6.9),
+            quarters: 1,
             boxes: vec![sofa_box],
         },
-        dresser("living_dresser", v3(0.02, 0.0, 4.4), 1),
+        dresser("hall_dresser", v3(6.61, 0.0, 1.3), 1),
         dresser("bedroom_a_dresser", v3(5.6, 3.3, 0.02), 0),
         bed("bedroom_a_bed", v3(4.9, 3.3, 4.995)),
-        bed("bedroom_c_bed", v3(14.9, 3.3, 4.995)),
         Placement {
             name: "kitchen",
             file: "models/wooden_kitchen.glb",

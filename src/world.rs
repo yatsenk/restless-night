@@ -3,12 +3,19 @@ use bevy::{
     render::render_resource::PrimitiveTopology,
 };
 
+use crate::doors::Doors;
 use crate::geom::{Mat, MeshData};
 use crate::layout::House;
 use crate::math::V3;
 
 #[derive(Resource)]
 pub struct HouseRes(pub House);
+
+#[derive(Resource)]
+pub struct DoorsRes(pub Doors);
+
+#[derive(Component)]
+pub struct DoorLeaf(pub usize);
 
 pub fn to_vec3(v: V3) -> Vec3 {
     Vec3::new(v.x, v.y, v.z)
@@ -91,42 +98,28 @@ pub fn spawn_house(
         }
     }
 
-    let size = 80.0;
-    let tile = 0.22;
-    let y = crate::layout::GROUND;
-    let ground = Mesh::new(
-        PrimitiveTopology::TriangleList,
-        RenderAssetUsages::default(),
-    )
-    .with_inserted_attribute(
-        Mesh::ATTRIBUTE_POSITION,
-        vec![
-            [-size + 8.0, y, -size + 6.0],
-            [size + 8.0, y, -size + 6.0],
-            [size + 8.0, y, size + 6.0],
-            [-size + 8.0, y, size + 6.0],
-        ],
-    )
-    .with_inserted_attribute(Mesh::ATTRIBUTE_NORMAL, vec![[0.0, 1.0, 0.0]; 4])
-    .with_inserted_attribute(
-        Mesh::ATTRIBUTE_UV_0,
-        vec![
-            [(-size + 8.0) * tile, (-size + 6.0) * tile],
-            [(size + 8.0) * tile, (-size + 6.0) * tile],
-            [(size + 8.0) * tile, (size + 6.0) * tile],
-            [(-size + 8.0) * tile, (size + 6.0) * tile],
-        ],
-    )
-    .with_inserted_indices(Indices::U32(vec![0, 3, 2, 0, 2, 1]));
-    commands.spawn((
-        Mesh3d(meshes.add(ground)),
-        MeshMaterial3d(materials.add(StandardMaterial {
-            base_color: Color::srgb(0.7, 0.68, 0.6),
-            base_color_texture: Some(texture(&assets, "ground")),
-            perceptual_roughness: 0.97,
-            reflectance: 0.05,
-            ..default()
-        })),
-        Transform::default(),
-    ));
+    let wood = meshes.add(mesh_from(&house.0.leaf_wood));
+    let metal = meshes.add(mesh_from(&house.0.leaf_metal));
+    let wood_mat = materials.add(material_for(Mat::Door, &assets));
+    let metal_mat = materials.add(material_for(Mat::Frame, &assets));
+    for (i, s) in house.0.doors.iter().enumerate() {
+        commands
+            .spawn((
+                DoorLeaf(i),
+                Transform::from_xyz(s.hx, s.y0, s.hz)
+                    .with_rotation(Quat::from_rotation_y(-s.closed)),
+                Visibility::default(),
+            ))
+            .with_children(|p| {
+                p.spawn((Mesh3d(wood.clone()), MeshMaterial3d(wood_mat.clone())));
+                p.spawn((Mesh3d(metal.clone()), MeshMaterial3d(metal_mat.clone())));
+            });
+    }
+}
+
+pub fn update_doors(doors: Res<DoorsRes>, mut q: Query<(&DoorLeaf, &mut Transform)>) {
+    for (leaf, mut t) in &mut q {
+        let yaw = doors.0.list[leaf.0].yaw();
+        t.rotation = Quat::from_rotation_y(yaw);
+    }
 }

@@ -9,13 +9,14 @@ use bevy::{
 
 use crate::collision::Body;
 use crate::math::v3;
-use crate::world::HouseRes;
+use crate::world::{DoorsRes, HouseRes};
 
 pub const EYE_HEIGHT: f32 = 1.62;
 pub const WALK_SPEED: f32 = 2.3;
 pub const RUN_SPEED: f32 = 4.0;
 pub const LOOK_SENSITIVITY: f32 = 0.0022;
 pub const START_EV: f32 = 5.4;
+pub const FLASHLIGHT_LUMENS: f32 = 18000.0;
 
 #[derive(Component)]
 pub struct PlayerCamera;
@@ -65,7 +66,7 @@ pub fn setup(mut commands: Commands, house: Res<HouseRes>) {
             ColorGrading {
                 global: ColorGradingGlobal {
                     post_saturation: 0.72,
-                    temperature: -0.06,
+                    temperature: 0.0,
                     ..default()
                 },
                 midtones: ColorGradingSection {
@@ -87,7 +88,7 @@ pub fn setup(mut commands: Commands, house: Res<HouseRes>) {
             p.spawn((
                 SpotLight {
                     color: Color::srgb(1.0, 0.93, 0.78),
-                    intensity: 4200.0,
+                    intensity: FLASHLIGHT_LUMENS,
                     range: 16.0,
                     inner_angle: 0.13,
                     outer_angle: 0.42,
@@ -127,10 +128,35 @@ pub fn look(
     st.pitch = (st.pitch - motion.delta.y * LOOK_SENSITIVITY).clamp(-1.45, 1.45);
 }
 
+#[derive(Resource, Default)]
+pub struct DoorHint(pub Option<(usize, bool)>);
+
+pub fn door_interact(
+    keys: Res<ButtonInput<KeyCode>>,
+    st: Res<PlayerState>,
+    mut doors: ResMut<DoorsRes>,
+    mut hint: ResMut<DoorHint>,
+) {
+    let rot = Quat::from_euler(EulerRot::YXZ, st.yaw, st.pitch, 0.0);
+    let look = rot * Vec3::NEG_Z;
+    let eye = (st.body.pos.x, st.eye_y, st.body.pos.z);
+    let pick = doors.0.pick(eye, (look.x, look.y, look.z));
+    let next = pick.map(|i| (i, doors.0.list[i].is_open()));
+    if hint.0 != next {
+        hint.0 = next;
+    }
+    if keys.just_pressed(KeyCode::KeyE) {
+        if let Some(i) = pick {
+            doors.0.interact(i, (eye.0, eye.2));
+        }
+    }
+}
+
 pub fn walk(
     time: Res<Time>,
     keys: Res<ButtonInput<KeyCode>>,
     house: Res<HouseRes>,
+    mut doors: ResMut<DoorsRes>,
     mut st: ResMut<PlayerState>,
 ) {
     let dt = time.delta_secs().min(0.05);
@@ -161,7 +187,11 @@ pub fn walk(
     let k = 1.0 - (-14.0 * dt).exp();
     st.vel = st.vel.lerp(wish, k);
     let d = st.vel * dt;
-    house.0.world.step(&mut st.body, d.x, d.y, dt);
+    let feet = st.body.pos.y;
+    let here = (st.body.pos.x, st.body.pos.z);
+    doors.0.update(here, feet, (d.x, d.y), dt);
+    let segs = doors.0.segs();
+    house.0.world.step_with(&mut st.body, d.x, d.y, dt, &segs);
     if st.body.pos.y < -20.0 {
         let s = house.0.spawn;
         st.body = Body::new(v3(s.x, s.y, s.z));
@@ -180,20 +210,17 @@ pub fn walk(
     }
 }
 
-pub fn apply_camera(
-    st: Res<PlayerState>,
-    mut cam: Single<&mut Transform, With<PlayerCamera>>,
-) {
+pub fn apply_camera(st: Res<PlayerState>, mut cam: Single<&mut Transform, With<PlayerCamera>>) {
     let amp = (st.vel.length() / RUN_SPEED).min(1.0);
     let bob_y = (st.bob * 2.0).sin() * 0.011 * amp;
     let bob_x = st.bob.sin() * 0.007 * amp;
     let rot = Quat::from_euler(EulerRot::YXZ, st.yaw, st.pitch, 0.0);
-    cam.translation = Vec3::new(st.body.pos.x, st.eye_y + bob_y, st.body.pos.z) + rot * Vec3::new(bob_x, 0.0, 0.0);
+    cam.translation = Vec3::new(st.body.pos.x, st.eye_y + bob_y, st.body.pos.z)
+        + rot * Vec3::new(bob_x, 0.0, 0.0);
     cam.rotation = rot;
 }
 
 pub fn flashlight(
-    time: Res<Time>,
     keys: Res<ButtonInput<KeyCode>>,
     mut st: ResMut<PlayerState>,
     mut q: Query<(&mut SpotLight, &mut Visibility), With<Flashlight>>,
@@ -201,14 +228,12 @@ pub fn flashlight(
     if keys.just_pressed(KeyCode::KeyF) {
         st.flashlight = !st.flashlight;
     }
-    let t = time.elapsed_secs();
-    let dip = {
-        let slot = (t * 9.0).floor();
-        let h = ((slot * 12.9898).sin() * 43758.547).fract().abs();
-        if h > 0.985 { 0.35 } else { 1.0 }
-    };
     for (mut l, mut v) in &mut q {
-        l.intensity = 4200.0 * dip;
-        *v = if st.flashlight { Visibility::Inherited } else { Visibility::Hidden };
+        l.intensity = FLASHLIGHT_LUMENS;
+        *v = if st.flashlight {
+            Visibility::Inherited
+        } else {
+            Visibility::Hidden
+        };
     }
 }

@@ -23,6 +23,42 @@ impl Solid {
 }
 
 #[derive(Clone, Copy, Debug)]
+pub struct Seg {
+    pub ax: f32,
+    pub az: f32,
+    pub bx: f32,
+    pub bz: f32,
+    pub half: f32,
+    pub y0: f32,
+    pub y1: f32,
+}
+
+impl Seg {
+    pub fn nearest(&self, x: f32, z: f32) -> (f32, f32) {
+        let ex = self.bx - self.ax;
+        let ez = self.bz - self.az;
+        let l2 = ex * ex + ez * ez;
+        let t = if l2 > 1e-9 {
+            (((x - self.ax) * ex + (z - self.az) * ez) / l2).clamp(0.0, 1.0)
+        } else {
+            0.0
+        };
+        (self.ax + ex * t, self.az + ez * t)
+    }
+
+    pub fn overlaps_circle(&self, x: f32, z: f32, radius: f32, feet: f32) -> bool {
+        if self.y1 <= feet + STEP || self.y0 >= feet + HEIGHT {
+            return false;
+        }
+        let (nx, nz) = self.nearest(x, z);
+        let dx = x - nx;
+        let dz = z - nz;
+        let r = radius + self.half;
+        dx * dx + dz * dz < r * r
+    }
+}
+
+#[derive(Clone, Copy, Debug)]
 pub struct Ramp {
     pub x0: f32,
     pub x1: f32,
@@ -130,8 +166,33 @@ impl World {
         best
     }
 
-    fn push_out(&self, x: &mut f32, z: &mut f32, feet: f32) -> bool {
+    fn push_out(&self, x: &mut f32, z: &mut f32, feet: f32, segs: &[Seg]) -> bool {
         let mut moved = false;
+        for s in segs {
+            if s.y1 <= feet + STEP || s.y0 >= feet + HEIGHT {
+                continue;
+            }
+            let (nx, nz) = s.nearest(*x, *z);
+            let dx = *x - nx;
+            let dz = *z - nz;
+            let d2 = dx * dx + dz * dz;
+            let r = RADIUS + s.half;
+            if d2 < r * r {
+                if d2 > 1e-10 {
+                    let d = d2.sqrt();
+                    let k = (r - d) / d;
+                    *x += dx * k;
+                    *z += dz * k;
+                } else {
+                    let ex = s.bx - s.ax;
+                    let ez = s.bz - s.az;
+                    let l = (ex * ex + ez * ez).sqrt().max(1e-6);
+                    *x += -ez / l * r;
+                    *z += ex / l * r;
+                }
+                moved = true;
+            }
+        }
         let lo = feet + STEP;
         let hi = feet + HEIGHT;
         for s in &self.solids {
@@ -182,6 +243,10 @@ impl World {
     }
 
     pub fn step(&self, b: &mut Body, dx: f32, dz: f32, dt: f32) {
+        self.step_with(b, dx, dz, dt, &[]);
+    }
+
+    pub fn step_with(&self, b: &mut Body, dx: f32, dz: f32, dt: f32, segs: &[Seg]) {
         let dist = (dx * dx + dz * dz).sqrt();
         let n = ((dist / MAX_SUBSTEP).ceil() as usize).max(1);
         let inv = 1.0 / n as f32;
@@ -189,7 +254,7 @@ impl World {
             b.pos.x += dx * inv;
             b.pos.z += dz * inv;
             for _ in 0..4 {
-                if !self.push_out(&mut b.pos.x, &mut b.pos.z, b.pos.y) {
+                if !self.push_out(&mut b.pos.x, &mut b.pos.z, b.pos.y, segs) {
                     break;
                 }
             }

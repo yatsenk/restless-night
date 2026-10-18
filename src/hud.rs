@@ -10,6 +10,9 @@ pub struct FpsText;
 #[derive(Component)]
 pub struct HintText;
 
+#[derive(Component)]
+pub struct DoorPrompt;
+
 #[derive(Resource, Default)]
 pub struct HintClock {
     pub locked_for: f32,
@@ -33,7 +36,7 @@ pub fn setup(mut commands: Commands) {
         FpsText,
     ));
     commands.spawn((
-        Text::new("Click to look around  |  WASD walk  |  Shift run  |  F flashlight  |  F5 quality  |  Esc release mouse"),
+        Text::new("Click to look around  |  WASD walk  |  Shift run  |  E door  |  F flashlight  |  F5 quality  |  Esc release mouse"),
         TextFont {
             font_size: FontSize::Px(15.0),
             ..default()
@@ -48,6 +51,39 @@ pub fn setup(mut commands: Commands) {
         },
         HintText,
     ));
+    commands.spawn((
+        Text::new(""),
+        TextFont {
+            font_size: FontSize::Px(18.0),
+            ..default()
+        },
+        TextColor(Color::srgba(0.85, 0.85, 0.85, 0.9)),
+        Node {
+            position_type: PositionType::Absolute,
+            top: percent(58),
+            width: percent(100),
+            justify_content: JustifyContent::Center,
+            ..default()
+        },
+        DoorPrompt,
+    ));
+}
+
+pub fn update_door_prompt(
+    hint: Res<crate::player::DoorHint>,
+    mut q: Query<&mut Text, With<DoorPrompt>>,
+) {
+    if !hint.is_changed() {
+        return;
+    }
+    let label = match hint.0 {
+        Some((_, true)) => "E  close door",
+        Some((_, false)) => "E  open door",
+        None => "",
+    };
+    for mut t in &mut q {
+        t.0 = label.to_string();
+    }
 }
 
 pub fn update_fps(

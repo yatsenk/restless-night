@@ -1,5 +1,5 @@
 use crate::collision::Solid;
-use crate::math::{V3, v3};
+use crate::math::{v3, V3};
 
 #[derive(Clone, Debug)]
 pub struct Placement {
@@ -105,25 +105,5 @@ pub fn placements() -> Vec<Placement> {
                 (v3(0.78, 0.0, 0.47), v3(1.55, 1.05, 1.85)),
             ],
         },
-        Placement {
-            name: "street_light",
-            file: "models/street_light.glb",
-            scale: 0.28,
-            anchor: v3(0.0, -0.305, 0.0),
-            pos: v3(5.0, -0.15, -7.0),
-            quarters: 0,
-            boxes: vec![],
-        },
-        Placement {
-            name: "car",
-            file: "models/fairheaven_sw_84_-_low_poly_model.glb",
-            scale: 1.0,
-            anchor: v3(-0.02, 0.015, -24.0),
-            pos: v3(9.0, -0.15, -9.5),
-            quarters: 0,
-            boxes: vec![],
-        },
     ]
 }
-
-pub const STREET_LIGHT_HEIGHT: f32 = 3.42;

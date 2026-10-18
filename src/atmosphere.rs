@@ -1,16 +1,17 @@
-use bevy::{
-    light::{CascadeShadowConfigBuilder, FogVolume, VolumetricLight},
-    prelude::*,
-};
+use bevy::{light::CascadeShadowConfigBuilder, prelude::*};
 
 use crate::layout::Flicker;
 use crate::player::PlayerCamera;
-use crate::world::{HouseRes, to_vec3};
+use crate::quality::Quality;
+use crate::world::{to_vec3, HouseRes};
 
-pub const MOON_LUX: f32 = 22.0;
-pub const AMBIENT_BRIGHTNESS: f32 = 1.3;
-pub const FOG_DENSITY: f32 = 0.034;
-pub const SHADOWED_ROOM_LIGHTS: usize = 4;
+pub const SUN_LUX: f32 = 45.0;
+pub const AMBIENT_BRIGHTNESS: f32 = 3.2;
+pub const FOG_DENSITY: f32 = 0.055;
+
+pub fn haze_color() -> Color {
+    Color::srgb(0.34, 0.37, 0.42)
+}
 
 #[derive(Component)]
 pub struct RoomLight {
@@ -20,39 +21,28 @@ pub struct RoomLight {
 }
 
 pub fn setup(mut commands: Commands, house: Res<HouseRes>) {
-    commands.insert_resource(ClearColor(Color::srgb(0.012, 0.016, 0.024)));
+    commands.insert_resource(ClearColor(haze_color()));
     commands.insert_resource(GlobalAmbientLight {
-        color: Color::srgb(0.5, 0.6, 0.92),
+        color: Color::srgb(0.58, 0.64, 0.76),
         brightness: AMBIENT_BRIGHTNESS,
         ..default()
     });
 
     commands.spawn((
         DirectionalLight {
-            color: Color::srgb(0.55, 0.68, 1.0),
-            illuminance: MOON_LUX,
+            color: Color::srgb(0.78, 0.82, 0.94),
+            illuminance: SUN_LUX,
             shadow_maps_enabled: true,
             ..default()
         },
-        VolumetricLight,
-        Transform::default().looking_to(Vec3::new(0.45, -0.55, 0.7), Vec3::Y),
+        Transform::default().looking_to(Vec3::new(0.5, -0.45, 0.75), Vec3::Y),
         CascadeShadowConfigBuilder {
-            num_cascades: 3,
+            num_cascades: 1,
             minimum_distance: 0.1,
-            maximum_distance: 40.0,
-            first_cascade_far_bound: 7.0,
+            maximum_distance: 34.0,
             ..default()
         }
         .build(),
-    ));
-
-    commands.spawn((
-        FogVolume {
-            fog_color: Color::srgb(0.55, 0.64, 0.8),
-            density_factor: 0.03,
-            ..default()
-        },
-        Transform::from_xyz(8.0, 3.3, 6.0).with_scale(Vec3::new(60.0, 16.0, 60.0)),
     ));
 
     for (i, l) in house.0.lights.iter().enumerate() {
@@ -101,11 +91,7 @@ fn pattern(f: Flicker, t: f32, phase: f32) -> f32 {
             let cyc = (t * 0.45 + phase).floor();
             let in_cycle = (t * 0.45 + phase).fract();
             if hash(cyc * 1.9) > 0.7 && in_cycle < 0.22 {
-                if hash((t * 34.0).floor() + phase) > 0.45 {
-                    1.0
-                } else {
-                    0.12
-                }
+                if hash((t * 34.0).floor() + phase) > 0.45 { 1.0 } else { 0.12 }
             } else {
                 0.94 + 0.04 * (t * 100.0).sin()
             }
@@ -121,21 +107,23 @@ pub fn flicker(time: Res<Time>, mut q: Query<(&RoomLight, &mut PointLight)>) {
 }
 
 pub fn shadow_budget(
+    quality: Res<Quality>,
     cam: Single<&Transform, With<PlayerCamera>>,
-    mut q: Query<(Entity, &GlobalTransform, &mut PointLight), With<RoomLight>>,
+    mut q: Query<(&GlobalTransform, &mut PointLight), With<RoomLight>>,
 ) {
     let p = cam.translation;
-    let mut order: Vec<(f32, Entity)> = q
+    let dist: Vec<f32> = q
         .iter()
-        .map(|(e, g, _)| (g.translation().distance_squared(p), e))
+        .map(|(g, _)| g.translation().distance_squared(p))
         .collect();
-    order.sort_by(|a, b| a.0.partial_cmp(&b.0).unwrap());
-    for (e, _, mut l) in &mut q {
-        let rank = order
-            .iter()
-            .position(|(_, o)| *o == e)
-            .unwrap_or(usize::MAX);
-        let want = rank < SHADOWED_ROOM_LIGHTS;
+    if dist.is_empty() {
+        return;
+    }
+    let mut sorted = dist.clone();
+    sorted.sort_by(|a, b| a.partial_cmp(b).unwrap());
+    let cutoff = sorted[(quality.point_shadows() - 1).min(sorted.len() - 1)];
+    for (i, (_, mut l)) in q.iter_mut().enumerate() {
+        let want = dist[i] <= cutoff;
         if l.shadow_maps_enabled != want {
             l.shadow_maps_enabled = want;
         }

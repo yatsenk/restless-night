@@ -33,7 +33,7 @@ pub fn setup(mut commands: Commands) {
         FpsText,
     ));
     commands.spawn((
-        Text::new("Click to look around  |  WASD walk  |  Shift run  |  F flashlight  |  Esc release mouse"),
+        Text::new("Click to look around  |  WASD walk  |  Shift run  |  F flashlight  |  F5 quality  |  Esc release mouse"),
         TextFont {
             font_size: FontSize::Px(15.0),
             ..default()
@@ -52,12 +52,13 @@ pub fn setup(mut commands: Commands) {
 
 pub fn update_fps(
     time: Res<Time>,
+    quality: Res<crate::quality::Quality>,
     diagnostics: Res<DiagnosticsStore>,
     mut acc: Local<f32>,
     mut q: Query<&mut Text, With<FpsText>>,
 ) {
     *acc += time.delta_secs();
-    if *acc < 0.25 {
+    if *acc < 0.25 && !quality.is_changed() {
         return;
     }
     *acc = 0.0;
@@ -66,7 +67,7 @@ pub fn update_fps(
         .and_then(|d| d.smoothed());
     if let Some(fps) = fps {
         for mut t in &mut q {
-            t.0 = format!("{fps:.0} FPS");
+            t.0 = format!("{fps:.0} FPS  [{}]", quality.label());
         }
     }
 }

@@ -1,10 +1,7 @@
 use bevy::{
-    anti_alias::smaa::Smaa,
-    camera::Exposure,
+    camera::{Exposure, Hdr},
     core_pipeline::tonemapping::Tonemapping,
     input::mouse::AccumulatedMouseMotion,
-    light::VolumetricFog,
-    post_process::bloom::Bloom,
     prelude::*,
     render::view::{ColorGrading, ColorGradingGlobal, ColorGradingSection},
     window::{CursorGrabMode, CursorOptions},
@@ -55,16 +52,14 @@ pub fn setup(mut commands: Commands, house: Res<HouseRes>) {
             Projection::Perspective(PerspectiveProjection {
                 fov: 72.0_f32.to_radians(),
                 near: 0.05,
+                far: 70.0,
                 ..default()
             }),
             Transform::from_xyz(s.x, s.y + EYE_HEIGHT, s.z),
             PlayerCamera,
             Tonemapping::TonyMcMapface,
-            Bloom {
-                intensity: 0.1,
-                ..default()
-            },
             Exposure { ev100: START_EV },
+            Hdr,
         ))
         .insert((
             ColorGrading {
@@ -80,18 +75,12 @@ pub fn setup(mut commands: Commands, house: Res<HouseRes>) {
                 ..default()
             },
             DistanceFog {
-                color: Color::srgb(0.028, 0.036, 0.048),
+                color: crate::atmosphere::haze_color(),
                 falloff: FogFalloff::ExponentialSquared {
                     density: crate::atmosphere::FOG_DENSITY,
                 },
                 ..default()
             },
-            VolumetricFog {
-                ambient_intensity: 0.0,
-                step_count: 32,
-                ..default()
-            },
-            Smaa::default(),
             Msaa::Off,
         ))
         .with_children(|p| {
@@ -99,7 +88,7 @@ pub fn setup(mut commands: Commands, house: Res<HouseRes>) {
                 SpotLight {
                     color: Color::srgb(1.0, 0.93, 0.78),
                     intensity: 4200.0,
-                    range: 30.0,
+                    range: 16.0,
                     inner_angle: 0.13,
                     outer_angle: 0.42,
                     shadow_maps_enabled: true,
@@ -191,13 +180,15 @@ pub fn walk(
     }
 }
 
-pub fn apply_camera(st: Res<PlayerState>, mut cam: Single<&mut Transform, With<PlayerCamera>>) {
+pub fn apply_camera(
+    st: Res<PlayerState>,
+    mut cam: Single<&mut Transform, With<PlayerCamera>>,
+) {
     let amp = (st.vel.length() / RUN_SPEED).min(1.0);
     let bob_y = (st.bob * 2.0).sin() * 0.011 * amp;
     let bob_x = st.bob.sin() * 0.007 * amp;
     let rot = Quat::from_euler(EulerRot::YXZ, st.yaw, st.pitch, 0.0);
-    cam.translation = Vec3::new(st.body.pos.x, st.eye_y + bob_y, st.body.pos.z)
-        + rot * Vec3::new(bob_x, 0.0, 0.0);
+    cam.translation = Vec3::new(st.body.pos.x, st.eye_y + bob_y, st.body.pos.z) + rot * Vec3::new(bob_x, 0.0, 0.0);
     cam.rotation = rot;
 }
 
@@ -218,10 +209,6 @@ pub fn flashlight(
     };
     for (mut l, mut v) in &mut q {
         l.intensity = 4200.0 * dip;
-        *v = if st.flashlight {
-            Visibility::Inherited
-        } else {
-            Visibility::Hidden
-        };
+        *v = if st.flashlight { Visibility::Inherited } else { Visibility::Hidden };
     }
 }

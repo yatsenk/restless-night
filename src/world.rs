@@ -91,7 +91,7 @@ pub fn spawn_house(
         }
     }
 
-    let size = 500.0;
+    let size = 80.0;
     let tile = 0.22;
     let y = crate::layout::GROUND;
     let ground = Mesh::new(

@@ -1,29 +1,46 @@
-use bevy::prelude::*;
+use bevy::{light::NotShadowCaster, prelude::*};
 
-use crate::models::{self, STREET_LIGHT_HEIGHT};
+use crate::models;
 use crate::world::to_vec3;
+
+#[derive(Component)]
+pub struct NoShadowProp;
 
 pub fn spawn_props(mut commands: Commands, assets: Res<AssetServer>) {
     for p in models::placements() {
-        commands.spawn((
-            WorldAssetRoot(assets.load(GltfAssetLabel::Scene(0).from_asset(p.file))),
-            Transform {
-                translation: to_vec3(p.translation()),
-                rotation: Quat::from_rotation_y(p.yaw()),
-                scale: Vec3::splat(p.scale),
-            },
-        ));
-        if p.name == "street_light" {
-            commands.spawn((
-                PointLight {
-                    color: Color::srgb(1.0, 0.74, 0.42),
-                    intensity: 9000.0,
-                    range: 28.0,
-                    shadow_maps_enabled: true,
-                    ..default()
+        let entity = commands
+            .spawn((
+                WorldAssetRoot(assets.load(GltfAssetLabel::Scene(0).from_asset(p.file))),
+                Transform {
+                    translation: to_vec3(p.translation()),
+                    rotation: Quat::from_rotation_y(p.yaw()),
+                    scale: Vec3::splat(p.scale),
                 },
-                Transform::from_translation(to_vec3(p.pos) + Vec3::Y * STREET_LIGHT_HEIGHT),
-            ));
+            ))
+            .id();
+        if p.name == "kitchen" {
+            commands.entity(entity).insert(NoShadowProp);
+        }
+    }
+}
+
+pub fn strip_shadows(
+    mut commands: Commands,
+    new: Query<Entity, (Added<Mesh3d>, Without<NotShadowCaster>)>,
+    parents: Query<&ChildOf>,
+    marks: Query<(), With<NoShadowProp>>,
+) {
+    for e in &new {
+        let mut cur = e;
+        loop {
+            if marks.contains(cur) {
+                commands.entity(e).insert(NotShadowCaster);
+                break;
+            }
+            match parents.get(cur) {
+                Ok(p) => cur = p.parent(),
+                Err(_) => break,
+            }
         }
     }
 }

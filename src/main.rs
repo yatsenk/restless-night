@@ -8,12 +8,15 @@ mod math;
 mod models;
 mod player;
 mod props;
+mod quality;
 mod world;
 
 use bevy::{
     diagnostic::FrameTimeDiagnosticsPlugin,
     image::{ImageAddressMode, ImageFilterMode, ImageSamplerDescriptor},
+    light::{DirectionalLightShadowMap, PointLightShadowMap},
     prelude::*,
+    window::PresentMode,
 };
 
 fn main() {
@@ -25,7 +28,7 @@ fn main() {
         mag_filter: ImageFilterMode::Linear,
         min_filter: ImageFilterMode::Linear,
         mipmap_filter: ImageFilterMode::Linear,
-        anisotropy_clamp: 16,
+        anisotropy_clamp: 8,
         ..default()
     };
     App::new()
@@ -34,6 +37,7 @@ fn main() {
                 .set(WindowPlugin {
                     primary_window: Some(Window {
                         title: "Restless Night".into(),
+                        present_mode: PresentMode::AutoNoVsync,
                         ..default()
                     }),
                     ..default()
@@ -45,6 +49,9 @@ fn main() {
         )
         .add_plugins(FrameTimeDiagnosticsPlugin::default())
         .insert_resource(world::HouseRes(house))
+        .insert_resource(quality::Quality::Medium)
+        .insert_resource(PointLightShadowMap { size: 512 })
+        .insert_resource(DirectionalLightShadowMap { size: 1024 })
         .init_resource::<debug::DebugState>()
         .add_systems(
             Startup,
@@ -64,10 +71,13 @@ fn main() {
                 player::walk,
                 player::apply_camera,
                 player::flashlight,
+                quality::keys,
+                quality::apply,
                 atmosphere::flicker,
                 atmosphere::shadow_budget,
                 hud::update_fps,
                 hud::update_hint,
+                props::strip_shadows,
                 debug::keys,
                 debug::draw_slots,
             )

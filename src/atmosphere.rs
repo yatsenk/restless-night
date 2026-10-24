@@ -1,15 +1,16 @@
 use bevy::{light::CascadeShadowConfigBuilder, prelude::*};
 
+use crate::layout::LightKind;
 use crate::player::PlayerCamera;
 use crate::quality::Quality;
 use crate::world::{HouseRes, to_vec3};
 
-pub const SUN_LUX: f32 = 45.0;
-pub const AMBIENT_BRIGHTNESS: f32 = 3.6;
+pub const SUN_LUX: f32 = 26.0;
+pub const AMBIENT_BRIGHTNESS: f32 = 3.0;
 pub const FOG_DENSITY: f32 = 0.02;
 
 pub fn haze_color() -> Color {
-    Color::srgb(0.30, 0.31, 0.34)
+    Color::srgb(0.38, 0.40, 0.43)
 }
 
 #[derive(Component)]
@@ -18,14 +19,14 @@ pub struct RoomLight;
 pub fn setup(mut commands: Commands, house: Res<HouseRes>) {
     commands.insert_resource(ClearColor(haze_color()));
     commands.insert_resource(GlobalAmbientLight {
-        color: Color::srgb(0.68, 0.70, 0.78),
+        color: Color::srgb(0.66, 0.72, 0.80),
         brightness: AMBIENT_BRIGHTNESS,
         ..default()
     });
 
     commands.spawn((
         DirectionalLight {
-            color: Color::srgb(0.78, 0.82, 0.94),
+            color: Color::srgb(0.72, 0.80, 0.94),
             illuminance: SUN_LUX,
             shadow_maps_enabled: true,
             ..default()
@@ -41,18 +42,23 @@ pub fn setup(mut commands: Commands, house: Res<HouseRes>) {
     ));
 
     for l in house.0.lights.iter() {
-        commands.spawn((
-            PointLight {
-                color: Color::srgb(l.color[0], l.color[1], l.color[2]),
-                intensity: l.lumens,
-                range: l.range,
-                shadow_maps_enabled: false,
-                radius: 0.08,
-                ..default()
-            },
-            Transform::from_translation(to_vec3(l.pos)),
-            RoomLight,
-        ));
+        let light = PointLight {
+            color: Color::srgb(l.color[0], l.color[1], l.color[2]),
+            intensity: l.lumens,
+            range: l.range,
+            shadow_maps_enabled: false,
+            radius: 0.08,
+            ..default()
+        };
+        let t = Transform::from_translation(to_vec3(l.pos));
+        match l.kind {
+            LightKind::Practical => {
+                commands.spawn((light, t, RoomLight));
+            }
+            LightKind::Window => {
+                commands.spawn((light, t));
+            }
+        }
     }
 }
 

@@ -1,4 +1,4 @@
-use crate::math::{v3, V3};
+use crate::math::{V3, v3};
 
 #[derive(Clone, Copy, PartialEq, Eq, Debug, Hash)]
 pub enum Mat {
@@ -6,7 +6,7 @@ pub enum Mat {
     Paper,
     Plaster,
     Tile,
-    Stucco,
+    Siding,
     Concrete,
     Trim,
     Wood,
@@ -14,9 +14,11 @@ pub enum Mat {
     Door,
     Glass,
     Frame,
+    Grass,
+    Asphalt,
 }
 
-pub const MAT_COUNT: usize = 12;
+pub const MAT_COUNT: usize = 14;
 
 impl Mat {
     pub const ALL: [Mat; MAT_COUNT] = [
@@ -24,7 +26,7 @@ impl Mat {
         Mat::Paper,
         Mat::Plaster,
         Mat::Tile,
-        Mat::Stucco,
+        Mat::Siding,
         Mat::Concrete,
         Mat::Trim,
         Mat::Wood,
@@ -32,6 +34,8 @@ impl Mat {
         Mat::Door,
         Mat::Glass,
         Mat::Frame,
+        Mat::Grass,
+        Mat::Asphalt,
     ];
 
     pub fn index(self) -> usize {
@@ -44,14 +48,16 @@ impl Mat {
             Mat::Paper => 0.5,
             Mat::Plaster => 0.35,
             Mat::Tile => 1.4,
-            Mat::Stucco => 0.35,
+            Mat::Siding => 1.1,
             Mat::Concrete => 0.5,
             Mat::Trim => 0.8,
             Mat::Wood => 0.9,
-            Mat::Roof => 0.8,
+            Mat::Roof => 0.9,
             Mat::Door => 0.9,
             Mat::Glass => 1.0,
             Mat::Frame => 1.2,
+            Mat::Grass => 0.22,
+            Mat::Asphalt => 0.3,
         }
     }
 }

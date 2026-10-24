@@ -1,7 +1,7 @@
 use bevy::{light::NotShadowCaster, prelude::*};
 
-use crate::models;
-use crate::world::to_vec3;
+use crate::house::models;
+use crate::game::world::to_vec3;
 
 #[derive(Component)]
 pub struct PropRoot;

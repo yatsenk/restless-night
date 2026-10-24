@@ -1,14 +1,12 @@
-use crate::collision::{Ramp, Solid, World};
-use crate::doors::{DoorSpec, LEAF_HALF, LIMIT};
-use crate::geom::{Builder, Mat, MeshData, SKIP_NX, SKIP_NY, SKIP_NZ, SKIP_PX, SKIP_PY, SKIP_PZ};
-use crate::math::{V3, v3};
-use crate::models;
+use crate::sim::collision::{Ramp, Solid, World};
+use crate::sim::doors::{DoorSpec, LEAF_HALF, LIMIT};
+use crate::house::geom::{Builder, Mat, MeshData, SKIP_NX, SKIP_NY, SKIP_NZ, SKIP_PX, SKIP_PY, SKIP_PZ};
+use crate::sim::math::{v3, V3};
 
-#[path = "layout/plan.rs"]
+pub mod geom;
+pub mod models;
 mod plan;
-#[path = "layout/shell.rs"]
 mod shell;
-#[path = "layout/stairs.rs"]
 mod stairs;
 
 pub const EXT: f32 = 0.30;
@@ -183,11 +181,19 @@ impl Room {
     }
 
     fn floor_y(&self) -> f32 {
-        if self.level == 0 { 0.0 } else { UPPER }
+        if self.level == 0 {
+            0.0
+        } else {
+            UPPER
+        }
     }
 
     fn ceil_y(&self) -> f32 {
-        if self.level == 0 { CEIL0 } else { TOP }
+        if self.level == 0 {
+            CEIL0
+        } else {
+            TOP
+        }
     }
 }
 
@@ -215,7 +221,7 @@ pub struct Slot {
     pub max: V3,
 }
 
-pub type QuadRec = crate::geom::LoggedQuad;
+pub type QuadRec = crate::house::geom::LoggedQuad;
 
 pub struct House {
     pub meshes: Vec<MeshData>,
@@ -705,6 +711,8 @@ fn garage_door(b: &mut Builder, w: &Wall, o: &Op) {
     b.cuboid(Mat::Trim, mn, mx, 0);
 }
 
+
+
 fn party_wall(w: &Wall) -> bool {
     w.axis == Axis::Z && (w.center() - (BAY_X1 + MX0) * 0.5).abs() < 0.01
 }
@@ -790,11 +798,7 @@ fn trims(b: &mut Builder, rs: &[Room], ws: &[Wall]) {
                         (floor_y, floor_y + SKIRT_H, SKIRT_P)
                     };
                     let mut cuts = trim_cuts(w, level, probe, hi_side, crown);
-                    cuts.extend(if crown {
-                        open_ceil.iter()
-                    } else {
-                        open_floor.iter()
-                    });
+                    cuts.extend(if crown { open_ceil.iter() } else { open_floor.iter() });
                     for &(s0, s1) in &spans {
                         let (s0, s1) = if w.axis == Axis::Z {
                             (s0 + proud, s1 - proud)
@@ -1038,42 +1042,10 @@ pub fn build_with(record: bool) -> (House, Vec<QuadRec>) {
         y1: -0.02,
     });
     let wall_h = GROUND + 3.0;
-    sol(
-        w,
-        LOT_X0 - 0.5,
-        deep,
-        LOT_Z0 - 0.5,
-        LOT_X0,
-        wall_h,
-        LOT_Z1 + 0.5,
-    );
-    sol(
-        w,
-        LOT_X1,
-        deep,
-        LOT_Z0 - 0.5,
-        LOT_X1 + 0.5,
-        wall_h,
-        LOT_Z1 + 0.5,
-    );
-    sol(
-        w,
-        LOT_X0 - 0.5,
-        deep,
-        LOT_Z0 - 0.5,
-        LOT_X1 + 0.5,
-        wall_h,
-        LOT_Z0,
-    );
-    sol(
-        w,
-        LOT_X0 - 0.5,
-        deep,
-        LOT_Z1,
-        LOT_X1 + 0.5,
-        wall_h,
-        LOT_Z1 + 0.5,
-    );
+    sol(w, LOT_X0 - 0.5, deep, LOT_Z0 - 0.5, LOT_X0, wall_h, LOT_Z1 + 0.5);
+    sol(w, LOT_X1, deep, LOT_Z0 - 0.5, LOT_X1 + 0.5, wall_h, LOT_Z1 + 0.5);
+    sol(w, LOT_X0 - 0.5, deep, LOT_Z0 - 0.5, LOT_X1 + 0.5, wall_h, LOT_Z0);
+    sol(w, LOT_X0 - 0.5, deep, LOT_Z1, LOT_X1 + 0.5, wall_h, LOT_Z1 + 0.5);
 
     sol(w, MX0, CEIL0, -EXT, OUT_X1, UPPER, HOLE_Z0);
     sol(w, MX0, CEIL0, S_END, OUT_X1, UPPER, OUT_Z1);
@@ -1089,15 +1061,7 @@ pub fn build_with(record: bool) -> (House, Vec<QuadRec>) {
     });
     sol(w, rc - 0.05, 0.0, S_Z0, rc + 0.05, UPPER, S_END);
     sol(w, rc - 0.05, UPPER, HOLE_Z0, rc + 0.05, UPPER + 1.1, S_END);
-    sol(
-        w,
-        S_X0,
-        UPPER,
-        HOLE_Z0 - 0.05,
-        S_X1,
-        UPPER + 1.1,
-        HOLE_Z0 + 0.05,
-    );
+    sol(w, S_X0, UPPER, HOLE_Z0 - 0.05, S_X1, UPPER + 1.1, HOLE_Z0 + 0.05);
 
     for p in models::placements() {
         for s in p.colliders() {

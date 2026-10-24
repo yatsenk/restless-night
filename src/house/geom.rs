@@ -1,4 +1,4 @@
-use crate::math::{V3, v3};
+use crate::sim::math::{v3, V3};
 
 #[derive(Clone, Copy, PartialEq, Eq, Debug, Hash)]
 pub enum Mat {

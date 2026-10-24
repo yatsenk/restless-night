@@ -1,4 +1,4 @@
-use crate::collision::{HEIGHT, RADIUS, STEP, Seg};
+use crate::sim::collision::{Seg, HEIGHT, RADIUS, STEP};
 
 pub const LEAF_HALF: f32 = 0.025;
 pub const OPEN_ANGLE: f32 = 1.55;

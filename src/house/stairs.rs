@@ -51,7 +51,13 @@ pub(super) fn stairs(b: &mut Builder) {
 pub(super) fn hole_rails(b: &mut Builder) {
     let y = UPPER + RAIL_H;
     let rc = S_X1 - 0.055;
-    b.beam(Mat::Wood, v3(rc, y, HOLE_Z0), v3(rc, y, S_END), 0.07, 0.05);
+    b.beam(
+        Mat::Wood,
+        v3(rc, y, HOLE_Z0),
+        v3(rc, y, S_END),
+        0.07,
+        0.05,
+    );
     let mut z = HOLE_Z0 + 0.1;
     while z < S_END - 0.05 {
         b.cuboid(

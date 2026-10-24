@@ -5,8 +5,8 @@ use bevy::{
     prelude::*,
 };
 
-use crate::atmosphere::{AMBIENT_BRIGHTNESS, SUN_LUX};
-use crate::player::{Flashlight, PlayerCamera};
+use crate::game::atmosphere::{AMBIENT_BRIGHTNESS, SUN_LUX};
+use crate::game::player::{Flashlight, PlayerCamera};
 
 #[derive(Resource, Clone, Copy, PartialEq, Eq)]
 pub enum Quality {

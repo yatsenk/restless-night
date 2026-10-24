@@ -1,7 +1,7 @@
 use bevy::{camera::Exposure, prelude::*, window::PresentMode};
 
-use crate::player::PlayerCamera;
-use crate::world::{HouseRes, to_vec3};
+use crate::game::player::PlayerCamera;
+use crate::game::world::{to_vec3, HouseRes};
 
 #[derive(Resource, Default)]
 pub struct DebugState {

@@ -1,5 +1,5 @@
-use crate::collision::Solid;
-use crate::math::{V3, v3};
+use crate::sim::collision::Solid;
+use crate::sim::math::{v3, V3};
 
 #[derive(Clone, Debug)]
 pub struct Placement {

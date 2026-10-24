@@ -7,9 +7,9 @@ use bevy::{
     window::{CursorGrabMode, CursorOptions},
 };
 
-use crate::collision::Body;
-use crate::math::v3;
-use crate::world::{DoorsRes, HouseRes};
+use crate::sim::collision::Body;
+use crate::sim::math::v3;
+use crate::game::world::{DoorsRes, HouseRes};
 
 pub const EYE_HEIGHT: f32 = 1.62;
 pub const WALK_SPEED: f32 = 2.3;
@@ -76,9 +76,9 @@ pub fn setup(mut commands: Commands, house: Res<HouseRes>) {
                 ..default()
             },
             DistanceFog {
-                color: crate::atmosphere::haze_color(),
+                color: crate::game::atmosphere::haze_color(),
                 falloff: FogFalloff::ExponentialSquared {
-                    density: crate::atmosphere::FOG_DENSITY,
+                    density: crate::game::atmosphere::FOG_DENSITY,
                 },
                 ..default()
             },

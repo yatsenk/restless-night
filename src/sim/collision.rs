@@ -1,4 +1,4 @@
-use crate::math::{v3, V3};
+use crate::sim::math::{v3, V3};
 
 pub const RADIUS: f32 = 0.3;
 pub const HEIGHT: f32 = 1.78;

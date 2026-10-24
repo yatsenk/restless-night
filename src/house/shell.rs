@@ -273,39 +273,15 @@ pub(super) fn ground(b: &mut Builder) {
         plane(b, Mat::Grass, x0, x1, z0, z1, GROUND);
     }
     let o = 0.01;
-    plane(
-        b,
-        Mat::Concrete,
-        -40.0,
-        40.0,
-        SIDEWALK_Z0,
-        SIDEWALK_Z1,
-        GROUND + o,
-    );
+    plane(b, Mat::Concrete, -40.0, 40.0, SIDEWALK_Z0, SIDEWALK_Z1, GROUND + o);
     b.cuboid(
         Mat::Concrete,
         v3(-40.0, GROUND, SIDEWALK_Z0 - 0.2),
         v3(40.0, GROUND + 0.12, SIDEWALK_Z0),
         SKIP_NY,
     );
-    plane(
-        b,
-        Mat::Asphalt,
-        -LAWN_R,
-        LAWN_R,
-        -15.5,
-        SIDEWALK_Z0 - 0.2,
-        GROUND + 0.005,
-    );
-    plane(
-        b,
-        Mat::Concrete,
-        PATH_X0,
-        PATH_X1,
-        -0.9,
-        SIDEWALK_Z1,
-        GROUND + o,
-    );
+    plane(b, Mat::Asphalt, -LAWN_R, LAWN_R, -15.5, SIDEWALK_Z0 - 0.2, GROUND + 0.005);
+    plane(b, Mat::Concrete, PATH_X0, PATH_X1, -0.9, SIDEWALK_Z1, GROUND + o);
     let zd0 = SIDEWALK_Z1;
     let zd1 = G_Z0 - EXT;
     let ya = GROUND + o;

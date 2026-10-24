@@ -1,9 +1,9 @@
 use bevy::{light::CascadeShadowConfigBuilder, prelude::*};
 
-use crate::layout::LightKind;
-use crate::player::PlayerCamera;
-use crate::quality::Quality;
-use crate::world::{HouseRes, to_vec3};
+use crate::game::player::PlayerCamera;
+use crate::game::quality::Quality;
+use crate::house::LightKind;
+use crate::game::world::{to_vec3, HouseRes};
 
 pub const SUN_LUX: f32 = 26.0;
 pub const AMBIENT_BRIGHTNESS: f32 = 3.0;

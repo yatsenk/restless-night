@@ -3,10 +3,10 @@ use bevy::{
     render::render_resource::PrimitiveTopology,
 };
 
-use crate::doors::Doors;
-use crate::geom::{Mat, MeshData};
-use crate::layout::House;
-use crate::math::V3;
+use crate::sim::doors::Doors;
+use crate::house::geom::{Mat, MeshData};
+use crate::house::House;
+use crate::sim::math::V3;
 
 #[derive(Resource)]
 pub struct HouseRes(pub House);

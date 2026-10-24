@@ -70,7 +70,7 @@ pub fn setup(mut commands: Commands) {
 }
 
 pub fn update_door_prompt(
-    hint: Res<crate::player::DoorHint>,
+    hint: Res<crate::game::player::DoorHint>,
     mut q: Query<&mut Text, With<DoorPrompt>>,
 ) {
     if !hint.is_changed() {
@@ -88,7 +88,7 @@ pub fn update_door_prompt(
 
 pub fn update_fps(
     time: Res<Time>,
-    quality: Res<crate::quality::Quality>,
+    quality: Res<crate::game::quality::Quality>,
     diagnostics: Res<DiagnosticsStore>,
     mut acc: Local<f32>,
     mut q: Query<&mut Text, With<FpsText>>,

@@ -30,7 +30,11 @@ impl V3 {
 
     pub fn norm(self) -> V3 {
         let l = self.len();
-        if l < 1e-9 { self } else { self * (1.0 / l) }
+        if l < 1e-9 {
+            self
+        } else {
+            self * (1.0 / l)
+        }
     }
 
     pub fn arr(self) -> [f32; 3] {

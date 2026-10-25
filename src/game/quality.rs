@@ -57,7 +57,7 @@ impl Quality {
     }
 
     fn sun_shadows(self) -> bool {
-        self != Quality::Low
+        self == Quality::High
     }
 
     fn flashlight_shadows(self) -> bool {

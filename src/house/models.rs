@@ -1,5 +1,6 @@
 use crate::sim::collision::Solid;
 use crate::sim::math::{v3, V3};
+use super::{MZ1, MX1, P_X1, UPPER};
 
 #[derive(Clone, Debug)]
 pub struct Placement {
@@ -83,21 +84,21 @@ pub fn placements() -> Vec<Placement> {
         Placement {
             name: "living_sofa",
             file: "models/modern__sofa.glb",
-            scale: 1.2,
+            scale: 1.5,
             anchor: v3(0.0, -0.301, 0.0),
-            pos: v3(7.5, 0.0, 1.9),
+            pos: v3(P_X1 + 0.8, 0.0, 1.95),
             quarters: 1,
             boxes: vec![sofa_box],
         },
-        dresser("hall_dresser", v3(6.79, 0.0, 2.75), 3),
-        dresser("mb_dresser", v3(12.68, 2.8, 5.9), 3),
-        bed("mb_bed", v3(10.4, 2.8, 7.64)),
+        dresser("hall_dresser", v3(P_X1 - 0.01, 0.0, 2.2), 3),
+        dresser("mb_dresser", v3(MX1 - 0.02, UPPER, 6.9), 3),
+        bed("mb_bed", v3(11.8, UPPER, MZ1 - 1.16)),
         Placement {
             name: "kitchen",
             file: "models/wooden_kitchen.glb",
             scale: 1.0,
             anchor: v3(0.78, 0.0, -0.28),
-            pos: v3(12.7, 0.0, 8.8),
+            pos: v3(MX1, 0.0, MZ1),
             quarters: 2,
             boxes: vec![
                 (v3(0.78, 0.0, -0.28), v3(4.22, 2.4, 0.47)),

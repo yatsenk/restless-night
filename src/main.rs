@@ -10,7 +10,9 @@ use bevy::{
     window::PresentMode,
 };
 
-use game::{atmosphere, debug, hud, player, props, quality, world};
+use game::{atmosphere, debug, frame_limit, hud, player, props, quality, world};
+
+const TARGET_FPS: Option<f32> = Some(60.0);
 use sim::doors;
 
 fn main() {
@@ -47,9 +49,12 @@ fn main() {
         .insert_resource(world::DoorsRes(doors))
         .init_resource::<player::DoorHint>()
         .insert_resource(quality::Quality::Medium)
+        .insert_resource(frame_limit::FrameLimit::new(TARGET_FPS))
         .insert_resource(PointLightShadowMap { size: 512 })
         .insert_resource(DirectionalLightShadowMap { size: 1024 })
         .init_resource::<debug::DebugState>()
+        .add_systems(Update, frame_limit::keys)
+        .add_systems(Last, frame_limit::wait)
         .add_systems(
             Startup,
             (

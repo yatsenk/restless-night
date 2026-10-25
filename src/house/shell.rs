@@ -1,7 +1,7 @@
 use super::*;
 
-const PITCH_MAIN: f32 = 0.42;
-const PITCH_BAY: f32 = 0.40;
+const PITCH_MAIN: f32 = 0.6;
+const PITCH_BAY: f32 = 0.75;
 const ROOF_T: f32 = 0.14;
 
 fn slab(b: &mut Builder, m: Mat, pts: [V3; 4], t: f32, edges: [bool; 4]) {
@@ -33,10 +33,14 @@ fn slab(b: &mut Builder, m: Mat, pts: [V3; 4], t: f32, edges: [bool; 4]) {
     }
 }
 
+const GABLE_X0: f32 = 8.0;
+const GABLE_X1: f32 = 13.6;
+const PITCH_GABLE: f32 = 0.9;
+
 fn main_roof(b: &mut Builder) {
     let s = PITCH_MAIN;
     let t = ROOF_T;
-    let ov = 0.6;
+    let ov = 0.5;
     let rake = 0.45;
     let x0 = BAY_X1 - 0.35;
     let x1 = OUT_X1 + rake;
@@ -47,18 +51,24 @@ fn main_roof(b: &mut Builder) {
     let ze_b = zw1 + ov;
     let yf = |z: f32| TOP + t + s * (z - zw0);
     let yb = |z: f32| TOP + t + s * (zw1 - z);
-    slab(
-        b,
-        Mat::Roof,
-        [
-            v3(x0, yf(ze_f), ze_f),
-            v3(x1, yf(ze_f), ze_f),
-            v3(x1, yf(zr), zr),
-            v3(x0, yf(zr), zr),
-        ],
-        t,
-        [true, true, false, true],
-    );
+    let edges = [true, true, false, true];
+    let front = |b: &mut Builder, xa: f32, xb: f32, za: f32, ea: [bool; 4]| {
+        slab(
+            b,
+            Mat::Roof,
+            [
+                v3(xa, yf(za), za),
+                v3(xb, yf(za), za),
+                v3(xb, yf(zr), zr),
+                v3(xa, yf(zr), zr),
+            ],
+            t,
+            ea,
+        );
+    };
+    front(b, x0, GABLE_X0, ze_f, edges);
+    front(b, GABLE_X1, x1, ze_f, edges);
+    front(b, GABLE_X0, GABLE_X1, zw0, [false, false, false, false]);
     slab(
         b,
         Mat::Roof,
@@ -69,7 +79,7 @@ fn main_roof(b: &mut Builder) {
             v3(x0, yb(zr), zr),
         ],
         t,
-        [true, true, false, true],
+        edges,
     );
     let peak = yf(zr) - t;
     b.tri(
@@ -93,12 +103,90 @@ fn main_roof(b: &mut Builder) {
         v3(x1, ridge + 0.06, zr + 0.12),
         SKIP_NY,
     );
+    cross_gable(b, zr);
 
-    gutter_x(b, x0 + 0.05, x1 - 0.05, ze_f, yf(ze_f), -1.0);
+    let cx0 = 13.8;
+    let cx1 = 14.7;
+    b.cuboid(
+        Mat::Concrete,
+        v3(cx0, TOP, zr - 0.45),
+        v3(cx1, ridge + 1.3, zr + 0.45),
+        SKIP_NY,
+    );
+    b.cuboid(
+        Mat::Concrete,
+        v3(cx0 - 0.06, ridge + 1.3, zr - 0.51),
+        v3(cx1 + 0.06, ridge + 1.42, zr + 0.51),
+        SKIP_NY,
+    );
+
+    gutter_x(b, x0 + 0.05, GABLE_X0 - 0.01, ze_f, yf(ze_f), -1.0);
+    gutter_x(b, GABLE_X1 + 0.01, x1 - 0.05, ze_f, yf(ze_f), -1.0);
     gutter_x(b, x0 + 0.05, x1 - 0.05, ze_b, yb(ze_b), 1.0);
-    downspout(b, 12.82, yf(ze_f) - 0.1, ze_f - 0.06, 12.82, zw0 - 0.05);
-    downspout(b, 12.82, yb(ze_b) - 0.1, ze_b + 0.06, 12.82, zw1 + 0.05);
+    downspout(b, MX1 + 0.12, yf(ze_f) - 0.1, ze_f - 0.06, MX1 + 0.12, zw0 - 0.05);
+    downspout(b, MX1 + 0.12, yb(ze_b) - 0.1, ze_b + 0.06, MX1 + 0.12, zw1 + 0.05);
     downspout(b, 3.95, yb(ze_b) - 0.1, ze_b + 0.06, 3.95, zw1 + 0.05);
+}
+
+fn cross_gable(b: &mut Builder, z_end: f32) {
+    let t = ROOF_T;
+    let s = PITCH_GABLE;
+    let rake = 0.45;
+    let zw0 = -EXT;
+    let zf = zw0 - rake;
+    let xc = (GABLE_X0 + GABLE_X1) * 0.5;
+    let y_eave = TOP + t;
+    let y_ridge = y_eave + s * (xc - GABLE_X0);
+    slab(
+        b,
+        Mat::Roof,
+        [
+            v3(GABLE_X0, y_eave, zf),
+            v3(xc, y_ridge, zf),
+            v3(xc, y_ridge, z_end),
+            v3(GABLE_X0, y_eave, z_end),
+        ],
+        t,
+        [true, false, false, true],
+    );
+    slab(
+        b,
+        Mat::Roof,
+        [
+            v3(xc, y_ridge, zf),
+            v3(GABLE_X1, y_eave, zf),
+            v3(GABLE_X1, y_eave, z_end),
+            v3(xc, y_ridge, z_end),
+        ],
+        t,
+        [true, true, false, false],
+    );
+    b.cuboid(
+        Mat::Roof,
+        v3(xc - 0.12, y_ridge, zf),
+        v3(xc + 0.12, y_ridge + 0.06, z_end),
+        SKIP_NY,
+    );
+    let peak = y_ridge - t;
+    b.tri(
+        Mat::Siding,
+        v3(GABLE_X0, TOP, zw0),
+        v3(GABLE_X1, TOP, zw0),
+        v3(xc, peak, zw0),
+        v3(0.0, 0.0, -1.0),
+    );
+    let (wx0, wx1) = (xc - 0.5, xc + 0.5);
+    let (wy0, wy1) = (TOP + 0.75, TOP + 1.95);
+    let zp = zw0 - 0.02;
+    b.fz(Mat::Trim, zp, wx0, wx1, wy0, wy1, -1.0);
+    let f = 0.07;
+    let zf0 = zp - 0.05;
+    b.cuboid(Mat::Frame, v3(wx0 - f, wy0 - f, zf0), v3(wx1 + f, wy0, zp), 0);
+    b.cuboid(Mat::Frame, v3(wx0 - f, wy1, zf0), v3(wx1 + f, wy1 + f, zp), 0);
+    b.cuboid(Mat::Frame, v3(wx0 - f, wy0, zf0), v3(wx0, wy1, zp), 0);
+    b.cuboid(Mat::Frame, v3(wx1, wy0, zf0), v3(wx1 + f, wy1, zp), 0);
+    b.cuboid(Mat::Frame, v3(xc - 0.02, wy0, zf0), v3(xc + 0.02, wy1, zp), 0);
+    b.cuboid(Mat::Frame, v3(wx0, (wy0 + wy1) * 0.5 - 0.02, zf0 + 0.01), v3(wx1, (wy0 + wy1) * 0.5 + 0.02, zp - 0.01), 0);
 }
 
 fn bay_roof(b: &mut Builder) {
@@ -238,9 +326,9 @@ pub(super) fn roofs(b: &mut Builder) {
 
 pub(super) fn porch(b: &mut Builder) {
     b.fz(Mat::Concrete, P_Z0, MX0, P_X1, GROUND, 0.0, -1.0);
-    for x in [3.95f32, 6.5] {
+    for x in [3.95f32, P_X1 - 0.3] {
         b.cuboid(
-            Mat::Frame,
+            Mat::Wood,
             v3(x - 0.09, 0.0, P_Z0),
             v3(x + 0.09, CEIL0, P_Z0 + 0.18),
             SKIP_NY,
@@ -323,7 +411,7 @@ pub(super) fn ground(b: &mut Builder) {
 }
 
 pub(super) fn basement(b: &mut Builder) {
-    let (x1, z1) = (BAY_X1, G_Z1);
+    let (x1, z1) = (BX1, BZ1);
     let m = Mat::Concrete;
     b.fy(m, B_FLOOR, 0.0, x1, B_Z0, z1, 1.0);
     b.grid_y(

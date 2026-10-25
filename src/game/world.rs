@@ -24,7 +24,7 @@ pub fn to_vec3(v: V3) -> Vec3 {
 fn mesh_from(md: &MeshData) -> Mesh {
     Mesh::new(
         PrimitiveTopology::TriangleList,
-        RenderAssetUsages::default(),
+        RenderAssetUsages::RENDER_WORLD,
     )
     .with_inserted_attribute(Mesh::ATTRIBUTE_POSITION, md.pos.clone())
     .with_inserted_attribute(Mesh::ATTRIBUTE_NORMAL, md.nor.clone())
@@ -55,15 +55,15 @@ fn material_for(m: Mat, assets: &AssetServer) -> StandardMaterial {
         Mat::Paper => textured("wallpaper", Color::srgb(0.86, 0.82, 0.74), 0.95, 0.12),
         Mat::Plaster => textured("plaster", Color::srgb(0.84, 0.82, 0.78), 0.95, 0.12),
         Mat::Tile => textured("tile", Color::srgb(0.9, 0.95, 0.92), 0.3, 0.5),
-        Mat::Siding => textured("siding", Color::srgb(0.74, 0.77, 0.76), 0.92, 0.12),
+        Mat::Siding => textured("siding", Color::srgb(0.5, 0.45, 0.4), 0.95, 0.08),
         Mat::Grass => textured("grass", Color::srgb(0.8, 0.82, 0.76), 1.0, 0.05),
         Mat::Asphalt => textured("asphalt", Color::srgb(0.8, 0.8, 0.82), 0.82, 0.25),
         Mat::Concrete => textured("concrete", Color::srgb(0.85, 0.85, 0.83), 0.9, 0.1),
         Mat::Trim => plain(Color::srgb(0.2, 0.15, 0.11), 0.7),
         Mat::Wood => textured("wood_floor", Color::srgb(0.55, 0.5, 0.45), 0.6, 0.3),
-        Mat::Roof => textured("shingle", Color::srgb(0.62, 0.64, 0.68), 0.88, 0.1),
+        Mat::Roof => textured("shingle", Color::srgb(0.42, 0.43, 0.46), 0.9, 0.1),
         Mat::Door => textured("wood_floor", Color::srgb(0.42, 0.34, 0.28), 0.6, 0.3),
-        Mat::Frame => plain(Color::srgb(0.72, 0.72, 0.68), 0.75),
+        Mat::Frame => plain(Color::srgb(0.62, 0.6, 0.54), 0.8),
         Mat::Glass => StandardMaterial {
             base_color: Color::srgba(0.55, 0.66, 0.72, 0.1),
             perceptual_roughness: 0.06,
